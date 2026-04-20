@@ -9,6 +9,7 @@ Type=Application
 Categories=GTK;GNOME;Utility;
 Keywords=video;edit;trim;crop;convert;
 StartupNotify=true
+DBusActivatable=true
 # Translators: Do NOT translate or transliterate this text (these are enum types)!
 X-Purism-FormFactor=Workstation;Mobile;
 MimeType=video/ogg;video/x-ogm;video/x-ogm+ogg;video/x-theora+ogg;video/x-theora;video/x-ms-asf;video/x-ms-asf-plugin;video/x-ms-asx;video/x-ms-wm;video/x-ms-wmv;video/x-ms-wmx;video/x-ms-wvx;video/x-msvideo;video/divx;video/msvideo;video/vnd.divx;video/avi;video/x-avi;video/vnd.rn-realvideo;video/mp2t;video/mpeg;video/mpeg-system;video/x-mpeg;video/x-mpeg2;video/x-mpeg-system;video/mp4;video/mp4v-es;video/x-m4v;video/quicktime;video/x-matroska;video/webm;video/3gp;video/3gpp;video/3gpp2;video/vnd.mpegurl;video/dv;video/x-anim;video/x-nsv;video/fli;video/flv;video/x-flc;video/x-fli;video/x-flv;

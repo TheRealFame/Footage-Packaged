@@ -15,6 +15,7 @@ template $AppWindow: Adw.ApplicationWindow {
         icon-name: 'go-previous-symbolic';
         tooltip-text: _("Edit Same Video");
         visible: false;
+        clicked => $on_back_edit() swapped;
 
         styles [
           'flat',
@@ -88,7 +89,12 @@ template $AppWindow: Adw.ApplicationWindow {
           Box {
             orientation: vertical;
 
-            $VideoPreview video_preview {}
+            $VideoPreview video_preview {
+              preview-ready => $on_preview_ready() swapped;
+              orientation-flipped => $on_orientation_flipped() swapped;
+              mode-changed => $on_preview_mode_changed() swapped;
+              set-position => $on_preview_set_position() swapped;
+            }
 
             Adw.Clamp {
               maximum-size: 600;
@@ -109,9 +115,14 @@ template $AppWindow: Adw.ApplicationWindow {
                     Button play_pause {
                       icon-name: 'play-symbolic';
                       tooltip-text: 'Play';
+                      clicked => $on_play_pause() swapped;
                     }
 
-                    $Timeline timeline {}
+                    $Timeline timeline {
+                      set-range => $on_timeline_set_range() swapped;
+                      moving => $on_timeline_moving() swapped;
+                      set-position => $on_timeline_set_position() swapped;
+                    }
                   }
                 }
 
@@ -124,30 +135,35 @@ template $AppWindow: Adw.ApplicationWindow {
                       halign: center;
                       icon-name: 'object-rotate-left-symbolic';
                       tooltip-text: _("Rotate Left");
+                      clicked => $on_rotate_left() swapped;
                     }
 
                     Button rotate_right_button {
                       halign: center;
                       icon-name: 'object-rotate-right-symbolic';
                       tooltip-text: _("Rotate Right");
+                      clicked => $on_rotate_right() swapped;
                     }
 
                     Button horizontal_flip_button {
                       halign: center;
                       icon-name: 'horizontal-flip-symbolic';
                       tooltip-text: _("Flip Horizontally");
+                      clicked => $on_horizontal_flip() swapped;
                     }
 
                     Button vertical_flip_button {
                       halign: center;
                       icon-name: 'vertical-flip-symbolic';
                       tooltip-text: _("Flip Vertically");
+                      clicked => $on_vertical_flip() swapped;
                     }
 
                     ToggleButton audio_button {
                       halign: center;
                       icon-name: 'audio-volume-high-symbolic';
                       tooltip-text: _("Disable Audio");
+                      toggled => $on_audio_toggled() swapped;
                     }
                   }
                 }
@@ -167,15 +183,17 @@ template $AppWindow: Adw.ApplicationWindow {
                         max-width-chars: 6;
                         visible: false;
                         hexpand: false;
+                        changed => $on_resize_width_changed() swapped;
                       }
 
-                      Entry resize_scale_width_value {
+                      Entry resize_width_multiplier_percentage {
                         valign: center;
                         placeholder-text: _("Width");
                         input-purpose: digits;
                         tooltip-text: _("Width");
                         max-width-chars: 6;
                         hexpand: false;
+                        changed => $on_resize_width_multiplier_percentage_changed() swapped;
                       }
 
                       Image link_axis {
@@ -196,15 +214,17 @@ template $AppWindow: Adw.ApplicationWindow {
                         max-width-chars: 6;
                         visible: false;
                         hexpand: false;
+                        changed => $on_resize_height_changed() swapped;
                       }
 
-                      Entry resize_scale_height_value {
+                      Entry resize_height_multiplier_percentage {
                         valign: center;
                         placeholder-text: _("Height");
                         tooltip-text: _("Height");
                         input-purpose: digits;
                         max-width-chars: 6;
                         hexpand: false;
+                        changed => $on_resize_height_multiplier_percentage_changed() swapped;
                       }
                     }
 
@@ -212,6 +232,7 @@ template $AppWindow: Adw.ApplicationWindow {
                       Box {
                         DropDown resize_type {
                           valign: center;
+                          notify::selected => $on_resize_type_changed() swapped;
 
                           accessibility {
                             label: _("Choose between resizing with percentages or using exact pixels");
@@ -251,6 +272,7 @@ template $AppWindow: Adw.ApplicationWindow {
                   Adw.ComboRow container_row {
                     title: _("Container Format");
                     use-subtitle: true;
+                    notify::selected => $on_container_changed() swapped;
 
                     model: StringList {};
 
@@ -262,6 +284,7 @@ template $AppWindow: Adw.ApplicationWindow {
                   Adw.ComboRow video_encoding {
                     title: _("Video Encoding");
                     use-subtitle: true;
+                    notify::selected => $on_video_encoding_changed() swapped;
 
                     model: StringList {};
 
@@ -288,6 +311,7 @@ template $AppWindow: Adw.ApplicationWindow {
 
                     Button save_button {
                       label: _("Save Video");
+                      clicked => $on_save_clicked() swapped;
 
                       styles [
                         "suggested-action",
@@ -331,6 +355,7 @@ template $AppWindow: Adw.ApplicationWindow {
               label: _("View Result");
               use-underline: true;
               width-request: 175;
+              clicked => $on_open_result() swapped;
 
               styles [
                 "pill",
@@ -343,6 +368,7 @@ template $AppWindow: Adw.ApplicationWindow {
               label: _("Finish");
               use-underline: true;
               width-request: 175;
+              clicked => $on_done() swapped;
 
               styles [
                 "suggested-action",
@@ -369,6 +395,7 @@ template $AppWindow: Adw.ApplicationWindow {
               halign: center;
               label: _("Retry");
               use-underline: true;
+              clicked => $on_try_again() swapped;
 
               styles [
                 "suggested-action",
@@ -402,6 +429,7 @@ template $AppWindow: Adw.ApplicationWindow {
               halign: center;
               label: _("_Cancel");
               use-underline: true;
+              clicked => $on_cancel() swapped;
 
               styles [
                 "pill",

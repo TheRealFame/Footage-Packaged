@@ -230,8 +230,8 @@ mod imp {
             }
 
             let position = self.position.get();
-            let x = ((position.as_secs_f64() / duration.as_secs_f64()).clamp(0., 1.) * width as f64)
-                as i32;
+            let x = ((position.as_secs_f64() / duration.as_secs_f64()).clamp(0., 1.)
+                * f64::from(width)) as i32;
             let position_width = self
                 .box_timeline_position
                 .measure(gtk::Orientation::Horizontal, -1)
@@ -249,8 +249,9 @@ mod imp {
 
             if let Some((start, end)) = self.range.get() {
                 let duration = duration.as_secs_f64();
-                let x = ((start.as_secs_f64() / duration).clamp(0., 1.) * width as f64) as i32;
-                let x_end = ((end.as_secs_f64() / duration).clamp(0., 1.) * width as f64) as i32;
+                let x = ((start.as_secs_f64() / duration).clamp(0., 1.) * f64::from(width)) as i32;
+                let x_end =
+                    ((end.as_secs_f64() / duration).clamp(0., 1.) * f64::from(width)) as i32;
 
                 let selection_width = self
                     .box_timeline_selection
@@ -309,8 +310,8 @@ mod imp {
                     .box_timeline_selection
                     .compute_bounds(&self.box_timeline_selection.parent().unwrap())
                     .unwrap();
-                let start = allocation.x() as f64;
-                let end = (allocation.x() + allocation.width()) as f64;
+                let start = f64::from(allocation.x());
+                let end = f64::from(allocation.x() + allocation.width());
 
                 if (x - end).abs() <= TOLERANCE {
                     self.drag_type.set(Some(DragType::End));
@@ -328,7 +329,7 @@ mod imp {
             let obj = self.obj();
 
             let x = self.drag_start.get() + offset_x;
-            let width = obj.width() as f64;
+            let width = f64::from(obj.width());
 
             // Sanitize (this can get weird values when resizing the window while dragging).
             let x = x.clamp(0., width);
@@ -365,14 +366,14 @@ mod imp {
                             (time, start)
                         }
                     }
-                    _ => return,
+                    DragType::Playback => return,
                 };
 
                 self.range.set(Some((start, end)));
                 // self.left_handle.set_tooltip_text(Some(&format_time(start)));
                 // self.right_handle.set_tooltip_text(Some(&format_time(end)));
                 self.refresh();
-            };
+            }
         }
 
         fn bring_start_forward(&self) {
@@ -383,22 +384,16 @@ mod imp {
             self.set_position(start);
             self.emit_set_range(start, end);
             self.emit_set_position(self.position.get());
-            // self.left_handle.set_tooltip_text(Some(&format_time(start)));
-            // self.right_handle.set_tooltip_text(Some(&format_time(end)));
         }
 
         fn bring_start_back(&self) {
             let (start, end) = self.range.get().unwrap();
-            self.range.set(Some((
-                (start - TIMELINE_KEYBOARD_MOVE).max(Duration::ZERO),
-                end,
-            )));
+            self.range
+                .set(Some(((start.saturating_sub(TIMELINE_KEYBOARD_MOVE)), end)));
             let (start, end) = self.range.get().unwrap();
             self.set_position(start);
             self.emit_set_range(start, end);
             self.emit_set_position(self.position.get());
-            // self.left_handle.set_tooltip_text(Some(&format_time(start)));
-            // self.right_handle.set_tooltip_text(Some(&format_time(end)));
         }
 
         fn bring_end_forward(&self) {
@@ -415,24 +410,20 @@ mod imp {
 
         fn bring_end_back(&self) {
             let (start, end) = self.range.get().unwrap();
-            self.range
-                .set(Some((start, (end - TIMELINE_KEYBOARD_MOVE).max(start))));
+            self.range.set(Some((
+                start,
+                (end.saturating_sub(TIMELINE_KEYBOARD_MOVE)).max(start),
+            )));
             let (start, end) = self.range.get().unwrap();
             self.set_position(end);
             self.emit_set_range(start, end);
             self.emit_set_position(self.position.get());
-            // self.left_handle.set_tooltip_text(Some(&format_time(start)));
-            // self.right_handle.set_tooltip_text(Some(&format_time(end)));
         }
 
         fn on_drag_end(&self) {
             let (start, end) = self.range.get().unwrap();
             self.emit_set_range(start, end);
             self.emit_set_position(self.position.get());
-            // self.refresh();
-            // self.left_handle.set_tooltip_text(Some(&format_time(start)));
-            // self.right_handle.set_tooltip_text(Some(&format_time(end)));
-            // self.set_position(start);
         }
 
         fn emit_moving(&self) {
@@ -474,8 +465,8 @@ mod imp {
                     .box_timeline_selection
                     .compute_bounds(&self.box_timeline_selection.parent().unwrap())
                     .unwrap();
-                let start = allocation.x() as f64;
-                let end = (allocation.x() + allocation.width()) as f64;
+                let start = f64::from(allocation.x());
+                let end = f64::from(allocation.x() + allocation.width());
 
                 (x - end).abs() <= TOLERANCE || (x - start).abs() <= TOLERANCE
             } else {
@@ -516,13 +507,3 @@ impl Timeline {
         self.imp().set_position(position);
     }
 }
-
-// fn format_time(time: u64) -> String {
-//     dbg!(time);
-
-//     let minutes = time / 60 / 1000;
-//     let seconds = time / 60 % 60;
-//     let cmseconds = time % 1000 / 10;
-
-//     format!("{minutes}:{seconds}.{cmseconds}")
-// }

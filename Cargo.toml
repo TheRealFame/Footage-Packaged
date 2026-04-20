@@ -4,7 +4,15 @@ version = "1.3.3"
 edition = "2024"
 rust-version = "1.88"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# nursery = { level = "warn", priority = -1 }
+# unwrap_used = "deny"
+wildcard_imports = "allow"
+future_not_send = "allow"
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
 
 [dependencies]
 gettext-rs = { version = "0.7", features = ["gettext-system"] }

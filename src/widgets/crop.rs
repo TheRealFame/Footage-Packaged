@@ -5,13 +5,56 @@ use gtk::{gio, glib};
 
 use crate::orientation::VideoOrientationTransformation;
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Selection {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
+}
+
+impl Selection {
+    pub fn for_dimensions(&self, width: f64, height: f64) -> (f64, f64, f64, f64) {
+        (
+            self.top * height,
+            self.right * width,
+            self.bottom * height,
+            self.left * width,
+        )
+    }
+
+    pub fn for_dimensions_f32(&self, width: f32, height: f32) -> (f32, f32, f32, f32) {
+        let (top, right, bottom, left) = self.for_dimensions(f64::from(width), f64::from(height));
+
+        #[allow(clippy::cast_possible_truncation)]
+        (
+            top.round() as f32,
+            right.round() as f32,
+            bottom.round() as f32,
+            left.round() as f32,
+        )
+    }
+
+    pub fn for_dimensions_i32(&self, width: i32, height: i32) -> (i32, i32, i32, i32) {
+        let (top, right, bottom, left) = self.for_dimensions(f64::from(width), f64::from(height));
+
+        #[allow(clippy::cast_possible_truncation)]
+        (
+            top.round() as i32,
+            right.round() as i32,
+            bottom.round() as i32,
+            left.round() as i32,
+        )
+    }
+}
+
 mod imp {
     use super::*;
     use glib::{clone, subclass::Signal};
     use gtk::{
         CompositeTemplate,
         gdk::{Key, RGBA},
-        graphene,
+        gsk::{self, FillRule},
     };
     use itertools::Itertools;
     use once_cell::unsync::OnceCell;
@@ -34,8 +77,9 @@ mod imp {
         All,
     }
 
-    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
     enum CursorType {
+        #[default]
         Normal,
         Top,
         Bottom,
@@ -65,11 +109,73 @@ mod imp {
         }
     }
 
-    #[derive(Debug, CompositeTemplate)]
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    enum Side {
+        Top,
+        Right,
+        Bottom,
+        Left,
+    }
+
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    enum Corner {
+        TopLeft,
+        TopRight,
+        BottomLeft,
+        BottomRight,
+    }
+
+    impl Corner {
+        fn sides(self) -> (Side, Side) {
+            match self {
+                Corner::TopLeft => (Side::Top, Side::Left),
+                Corner::TopRight => (Side::Top, Side::Right),
+                Corner::BottomLeft => (Side::Bottom, Side::Left),
+                Corner::BottomRight => (Side::Bottom, Side::Right),
+            }
+        }
+    }
+
+    // Positive means moving down for top and bottom, and right for left and right. Negative means the opposite.
+    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+    enum MoveDirection {
+        Positive,
+        Negative,
+    }
+
+    impl Selection {
+        fn move_side(&self, side: Side, direction: MoveDirection, amount: f64) -> Self {
+            let amount = match direction {
+                MoveDirection::Positive => amount,
+                MoveDirection::Negative => -amount,
+            };
+
+            match side {
+                Side::Top => Self {
+                    top: (self.top + amount).clamp(0., 1. - self.bottom),
+                    ..*self
+                },
+                Side::Right => Self {
+                    // Note the minus sign, because moving right means reducing the right crop.
+                    right: (self.right - amount).clamp(0., 1. - self.left),
+                    ..*self
+                },
+                Side::Bottom => Self {
+                    // Note the minus sign, because moving down means reducing the bottom crop.
+                    bottom: (self.bottom - amount).clamp(0., 1. - self.top),
+                    ..*self
+                },
+                Side::Left => Self {
+                    left: (self.left + amount).clamp(0., 1. - self.right),
+                    ..*self
+                },
+            }
+        }
+    }
+
+    #[derive(Debug, CompositeTemplate, Default)]
     #[template(resource = "/io/gitlab/adhami3310/Footage/blueprints/crop.ui")]
     pub struct Crop {
-        #[template_child]
-        pub crop_box: TemplateChild<gtk::Box>,
         #[template_child]
         pub inner_crop_box: TemplateChild<gtk::Box>,
         #[template_child]
@@ -88,8 +194,8 @@ mod imp {
         pub bottom_right: TemplateChild<gtk::Button>,
 
         gesture_drag: OnceCell<gtk::GestureDrag>,
-        drag_start: Cell<(f64, f64, f64, f64)>,
-        pub current_selection: Cell<(f64, f64, f64, f64)>,
+        drag_start: Cell<Selection>,
+        pub current_selection: Cell<Selection>,
         drag_type: Cell<Option<DragType>>,
         cursor_type: Cell<CursorType>,
     }
@@ -111,189 +217,17 @@ mod imp {
         }
 
         fn new() -> Self {
-            Self {
-                crop_box: TemplateChild::default(),
-                container: TemplateChild::default(),
-                inner_crop_box: TemplateChild::default(),
-                top: TemplateChild::default(),
-                bottom: TemplateChild::default(),
-                top_left: TemplateChild::default(),
-                top_right: TemplateChild::default(),
-                bottom_left: TemplateChild::default(),
-                bottom_right: TemplateChild::default(),
-
-                gesture_drag: OnceCell::new(),
-                drag_start: Cell::new((0., 0., 0., 0.)),
-                current_selection: Cell::new((0., 0., 0., 0.)),
-                drag_type: Cell::new(None),
-                cursor_type: Cell::new(CursorType::Normal),
-            }
+            Self::default()
         }
     }
 
     impl ObjectImpl for Crop {
         fn constructed(&self) {
-            let obj = self.obj();
             self.parent_constructed();
-            // Set up the drag gesture.
-            let gesture_drag = gtk::GestureDrag::new();
-            gesture_drag.connect_drag_begin({
-                let obj = obj.downgrade();
-                move |_, x, y| {
-                    let obj = obj.upgrade().unwrap();
-                    let imp = obj.imp();
-                    imp.on_drag_start(x, y);
-                }
-            });
-            gesture_drag.connect_drag_update({
-                let obj = obj.downgrade();
-                move |_, offset_x, offset_y| {
-                    let obj = obj.upgrade().unwrap();
-                    let imp = obj.imp();
-                    imp.on_drag_update(offset_x, offset_y);
-                }
-            });
-            gesture_drag.connect_drag_end({
-                let obj = obj.downgrade();
-                move |_, _, _| {
-                    let obj = obj.upgrade().unwrap();
-                    let imp = obj.imp();
-                    imp.on_drag_end();
-                }
-            });
-            obj.add_controller(gesture_drag.clone());
-            self.gesture_drag.set(gesture_drag).unwrap();
 
-            let event_controller_motion = gtk::EventControllerMotion::new();
-            event_controller_motion.connect_motion({
-                let obj = obj.downgrade();
-                move |_, x, y| {
-                    let obj = obj.upgrade().unwrap();
-                    let imp = obj.imp();
-                    imp.on_motion(x, y);
-                }
-            });
-            obj.add_controller(event_controller_motion);
-
-            let event_controller_keyboard = gtk::EventControllerKey::new();
-            event_controller_keyboard.connect_key_pressed(clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                glib::Propagation::Stop,
-                move |_, k, _, _| {
-                    match k {
-                        Key::Down => {
-                            this.bring_top_down();
-                            glib::Propagation::Stop
-                        }
-                        Key::Up => {
-                            this.bring_top_up();
-                            glib::Propagation::Stop
-                        }
-                        Key::Left => {
-                            this.bring_left_left();
-                            glib::Propagation::Stop
-                        }
-                        Key::Right => {
-                            this.bring_left_right();
-                            glib::Propagation::Stop
-                        }
-                        _ => glib::Propagation::Proceed,
-                    }
-                }
-            ));
-            self.top_left.add_controller(event_controller_keyboard);
-
-            let event_controller_keyboard = gtk::EventControllerKey::new();
-            event_controller_keyboard.connect_key_pressed(clone!(
-                #[weak(rename_to = this)]
-                self,
-                #[upgrade_or]
-                glib::Propagation::Stop,
-                move |_, k, _, _| {
-                    match k {
-                        Key::Down => {
-                            this.bring_bottom_down();
-                            glib::Propagation::Stop
-                        }
-                        Key::Up => {
-                            this.bring_bottom_up();
-                            glib::Propagation::Stop
-                        }
-                        Key::Left => {
-                            this.bring_left_left();
-                            glib::Propagation::Stop
-                        }
-                        Key::Right => {
-                            this.bring_left_right();
-                            glib::Propagation::Stop
-                        }
-                        _ => glib::Propagation::Proceed,
-                    }
-                }
-            ));
-            self.bottom_left.add_controller(event_controller_keyboard);
-
-            let event_controller_keyboard = gtk::EventControllerKey::new();
-            event_controller_keyboard.connect_key_pressed(clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                glib::Propagation::Stop,
-                move |_, k, _, _| {
-                    match k {
-                        Key::Down => {
-                            this.bring_top_down();
-                            glib::Propagation::Stop
-                        }
-                        Key::Up => {
-                            this.bring_top_up();
-                            glib::Propagation::Stop
-                        }
-                        Key::Left => {
-                            this.bring_right_left();
-                            glib::Propagation::Stop
-                        }
-                        Key::Right => {
-                            this.bring_right_right();
-                            glib::Propagation::Stop
-                        }
-                        _ => glib::Propagation::Proceed,
-                    }
-                }
-            ));
-            self.top_right.add_controller(event_controller_keyboard);
-
-            let event_controller_keyboard = gtk::EventControllerKey::new();
-            event_controller_keyboard.connect_key_pressed(clone!(
-                #[weak(rename_to = this)]
-                self,
-                #[upgrade_or]
-                glib::Propagation::Stop,
-                move |_, k, _, _| {
-                    match k {
-                        Key::Down => {
-                            this.bring_bottom_down();
-                            glib::Propagation::Stop
-                        }
-                        Key::Up => {
-                            this.bring_bottom_up();
-                            glib::Propagation::Stop
-                        }
-                        Key::Left => {
-                            this.bring_right_left();
-                            glib::Propagation::Stop
-                        }
-                        Key::Right => {
-                            this.bring_right_right();
-                            glib::Propagation::Stop
-                        }
-                        _ => glib::Propagation::Proceed,
-                    }
-                }
-            ));
-            self.bottom_right.add_controller(event_controller_keyboard);
+            self.setup_drag_gesture();
+            self.setup_motion_event();
+            self.setup_keyboard_events();
         }
 
         fn signals() -> &'static [Signal] {
@@ -323,20 +257,15 @@ mod imp {
     impl WidgetImpl for Crop {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             let crop = self.current_selection.get();
-
+            let (top, right, bottom, left) = crop.for_dimensions_i32(width, height);
             self.container.size_allocate(
-                &gtk::Allocation::new(
-                    (width as f64 * crop.3).round() as i32,
-                    (height as f64 * crop.0).round() as i32,
-                    (width as f64 * (1. - crop.3 - crop.1)).round() as i32,
-                    (height as f64 * (1. - crop.2 - crop.0)).round() as i32,
-                ),
+                &gtk::Allocation::new(left, top, width - left - right, height - top - bottom),
                 baseline,
             );
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
-            let c = RGBA::builder()
+            let gray = RGBA::builder()
                 .red(0.)
                 .green(0.)
                 .blue(0.)
@@ -347,40 +276,146 @@ mod imp {
 
             let crop = self.current_selection.get();
 
-            let top = (height as f64 * crop.0).round() as f32;
-            let left = (width as f64 * crop.3).round() as f32;
-            let bottom = top + (height as f64 * (1. - crop.2 - crop.0)).round() as f32;
-            let right = left + (width as f64 * (1. - crop.3 - crop.1)).round() as f32;
+            let (top, right, bottom, left) = crop.for_dimensions_f32(width, height);
 
-            snapshot.append_color(&c, &graphene::Rect::new(0., 0., width, top));
-            snapshot.append_color(&c, &graphene::Rect::new(0., top, left, bottom - top));
-            snapshot.append_color(&c, &graphene::Rect::new(0., bottom, width, height - bottom));
-            snapshot.append_color(
-                &c,
-                &graphene::Rect::new(right, top, width - right, bottom - top),
-            );
+            let outer_crop_box_path = {
+                let outer_crop_box_builder = gsk::PathBuilder::new();
+                // Draw the outer rectangle covering the whole widget.
+                outer_crop_box_builder.move_to(0., 0.);
+                outer_crop_box_builder.line_to(width, 0.);
+                outer_crop_box_builder.line_to(width, height);
+                outer_crop_box_builder.line_to(0., height);
+                outer_crop_box_builder.close();
+                // Draw the inner rectangle representing the crop box.
+                // EvenOdd fill rule will make sure that the area between the inner and outer rectangles is filled,
+                // while the area inside the inner rectangle is not.
+                outer_crop_box_builder.move_to(left, top);
+                outer_crop_box_builder.line_to(width - right, top);
+                outer_crop_box_builder.line_to(width - right, height - bottom);
+                outer_crop_box_builder.line_to(left, height - bottom);
+                outer_crop_box_builder.close();
+                outer_crop_box_builder.to_path()
+            };
 
+            snapshot.append_fill(&outer_crop_box_path, FillRule::EvenOdd, &gray);
             self.obj()
                 .snapshot_child(&self.obj().first_child().unwrap(), snapshot);
         }
     }
 
     impl Crop {
+        fn setup_drag_gesture(&self) {
+            let obj = self.obj();
+
+            let gesture_drag = gtk::GestureDrag::new();
+            gesture_drag.connect_drag_begin({
+                let obj = obj.downgrade();
+                move |_, x, y| {
+                    let obj = obj.upgrade().unwrap();
+                    let imp = obj.imp();
+                    imp.on_drag_start(x, y);
+                }
+            });
+            gesture_drag.connect_drag_update({
+                let obj = obj.downgrade();
+                move |_, offset_x, offset_y| {
+                    let obj = obj.upgrade().unwrap();
+                    let imp = obj.imp();
+                    imp.on_drag_update(offset_x, offset_y);
+                }
+            });
+            gesture_drag.connect_drag_end({
+                let obj = obj.downgrade();
+                move |_, _, _| {
+                    let obj = obj.upgrade().unwrap();
+                    let imp = obj.imp();
+                    imp.on_drag_end();
+                }
+            });
+            obj.add_controller(gesture_drag.clone());
+            self.gesture_drag.set(gesture_drag).unwrap();
+        }
+
+        fn setup_motion_event(&self) {
+            let obj = self.obj();
+            let event_controller_motion = gtk::EventControllerMotion::new();
+            event_controller_motion.connect_motion({
+                let obj = obj.downgrade();
+                move |_, x, y| {
+                    let obj = obj.upgrade().unwrap();
+                    let imp = obj.imp();
+                    imp.on_motion(x, y);
+                }
+            });
+            obj.add_controller(event_controller_motion);
+        }
+
+        fn setup_keyboard_events(&self) {
+            self.top_left
+                .add_controller(self.get_event_controller_key(Corner::TopLeft));
+            self.bottom_left
+                .add_controller(self.get_event_controller_key(Corner::BottomLeft));
+            self.top_right
+                .add_controller(self.get_event_controller_key(Corner::TopRight));
+            self.bottom_right
+                .add_controller(self.get_event_controller_key(Corner::BottomRight));
+        }
+
+        fn get_event_controller_key(&self, corner: Corner) -> gtk::EventControllerKey {
+            let event_controller_keyboard = gtk::EventControllerKey::new();
+            let (vertical_side, horizontal_side) = corner.sides();
+
+            event_controller_keyboard.connect_key_pressed(clone!(
+                #[weak(rename_to=this)]
+                self,
+                #[upgrade_or]
+                glib::Propagation::Stop,
+                move |_, key, _, _| {
+                    match key {
+                        Key::Up => {
+                            this.move_crop_box(vertical_side, MoveDirection::Negative);
+                            glib::Propagation::Stop
+                        }
+                        Key::Down => {
+                            this.move_crop_box(vertical_side, MoveDirection::Positive);
+                            glib::Propagation::Stop
+                        }
+                        Key::Left => {
+                            this.move_crop_box(horizontal_side, MoveDirection::Negative);
+                            glib::Propagation::Stop
+                        }
+                        Key::Right => {
+                            this.move_crop_box(horizontal_side, MoveDirection::Positive);
+                            glib::Propagation::Stop
+                        }
+                        _ => glib::Propagation::Proceed,
+                    }
+                }
+            ));
+
+            event_controller_keyboard
+        }
+
         fn positons(&self) -> (f64, f64, f64, f64) {
             let crop = self.current_selection.get();
             let (width, height) = (self.obj().width(), self.obj().height());
             (
-                (height as f64 * crop.0),
-                (width as f64 * (1. - crop.1)),
-                (height as f64 * (1. - crop.2)),
-                (width as f64 * crop.3),
+                (f64::from(height) * crop.top),
+                (f64::from(width) * (1. - crop.right)),
+                (f64::from(height) * (1. - crop.bottom)),
+                (f64::from(width) * crop.left),
             )
         }
 
         fn calculate_drag_type(&self, x: f64, y: f64) -> Option<DragType> {
-            let (t, r, b, l) = self.positons();
+            let (top, right, bottom, left) = self.positons();
 
-            let (dt, dr, db, dl) = ((y - t).abs(), (x - r).abs(), (y - b).abs(), (x - l).abs());
+            let (dt, dr, db, dl) = (
+                (y - top).abs(),
+                (x - right).abs(),
+                (y - bottom).abs(),
+                (x - left).abs(),
+            );
 
             let ((i0, v0), (i1, v1)) = [dt, dr, db, dl]
                 .into_iter()
@@ -392,11 +427,10 @@ mod imp {
                 .unwrap();
 
             if v0 > NotNan::new(TOLERANCE).unwrap() {
-                if x >= l && x <= r && y >= t && y <= b {
+                if x >= left && x <= right && y >= top && y <= bottom {
                     return Some(DragType::All);
-                } else {
-                    return None;
                 }
+                return None;
             }
 
             if v1 > NotNan::new(TOLERANCE).unwrap() {
@@ -466,96 +500,96 @@ mod imp {
             let old_selection = self.drag_start.get();
 
             let min_size = 0.05;
-            let width = 1. - current_selection.1 - current_selection.3 - min_size;
-            let height = 1. - current_selection.0 - current_selection.2 - min_size;
+            let width = 1. - current_selection.right - current_selection.left - min_size;
+            let height = 1. - current_selection.top - current_selection.bottom - min_size;
 
-            let offset_x = offset_x / (self.obj().width() as f64);
-            let offset_y = offset_y / (self.obj().height() as f64);
+            let offset_x = offset_x / f64::from(self.obj().width());
+            let offset_y = offset_y / f64::from(self.obj().height());
 
-            let actual_offset_y = offset_y - (current_selection.0 - old_selection.0)
-                + (current_selection.2 - old_selection.2);
-            let actual_offset_x = offset_x - (current_selection.3 - old_selection.3)
-                + (current_selection.1 - old_selection.1);
+            let actual_offset_y = offset_y - (current_selection.top - old_selection.top)
+                + (current_selection.bottom - old_selection.bottom);
+            let actual_offset_x = offset_x - (current_selection.left - old_selection.left)
+                + (current_selection.right - old_selection.right);
 
             let drag_type = self.drag_type.get().unwrap();
 
             if matches!(drag_type, DragType::All) {
-                let actual_offset_y = offset_y - (current_selection.0 - old_selection.0);
-                let actual_offset_x = offset_x - (current_selection.3 - old_selection.3);
+                let actual_offset_y = offset_y - (current_selection.top - old_selection.top);
+                let actual_offset_x = offset_x - (current_selection.left - old_selection.left);
                 let offset_y = actual_offset_y
-                    .clamp(-current_selection.0, height)
-                    .clamp(-height, current_selection.2);
+                    .clamp(-current_selection.top, height)
+                    .clamp(-height, current_selection.bottom);
                 let offset_x = actual_offset_x
-                    .clamp(-current_selection.3, width)
-                    .clamp(-width, current_selection.1);
+                    .clamp(-current_selection.left, width)
+                    .clamp(-width, current_selection.right);
 
-                self.current_selection.set((
-                    offset_y + current_selection.0,
-                    -offset_x + current_selection.1,
-                    -offset_y + current_selection.2,
-                    offset_x + current_selection.3,
-                ));
+                self.current_selection.set(Selection {
+                    top: offset_y + current_selection.top,
+                    right: -offset_x + current_selection.right,
+                    bottom: -offset_y + current_selection.bottom,
+                    left: offset_x + current_selection.left,
+                });
             }
 
             if matches!(
                 drag_type,
                 DragType::Top | DragType::TopLeft | DragType::TopRight
             ) {
-                let offset_y = actual_offset_y.clamp(-current_selection.0, height);
+                let offset_y = actual_offset_y.clamp(-current_selection.top, height);
 
                 let current_selection = self.current_selection.get();
 
-                self.current_selection.set((
-                    offset_y + current_selection.0,
-                    current_selection.1,
-                    current_selection.2,
-                    current_selection.3,
-                ));
+                self.current_selection.set(Selection {
+                    top: offset_y + current_selection.top,
+                    right: current_selection.right,
+                    bottom: current_selection.bottom,
+                    left: current_selection.left,
+                });
             }
             if matches!(
                 drag_type,
                 DragType::Bottom | DragType::BottomLeft | DragType::BottomRight
             ) {
-                let offset_y = actual_offset_y.clamp(-height, current_selection.2);
+                let offset_y = actual_offset_y.clamp(-height, current_selection.bottom);
 
                 let current_selection = self.current_selection.get();
 
-                self.current_selection.set((
-                    current_selection.0,
-                    current_selection.1,
-                    -offset_y + current_selection.2,
-                    current_selection.3,
-                ));
+                self.current_selection.set(Selection {
+                    top: current_selection.top,
+                    right: current_selection.right,
+                    bottom: -offset_y + current_selection.bottom,
+                    left: current_selection.left,
+                });
             }
             if matches!(
                 drag_type,
                 DragType::Left | DragType::BottomLeft | DragType::TopLeft
             ) {
-                let offset_x = actual_offset_x.clamp(-current_selection.3, width);
+                let offset_x = actual_offset_x.clamp(-current_selection.left, width);
 
                 let current_selection = self.current_selection.get();
 
-                self.current_selection.set((
-                    current_selection.0,
-                    current_selection.1,
-                    current_selection.2,
-                    offset_x + current_selection.3,
-                ));
+                self.current_selection.set(Selection {
+                    top: current_selection.top,
+                    right: current_selection.right,
+                    bottom: current_selection.bottom,
+                    left: offset_x + current_selection.left,
+                });
             }
             if matches!(
                 drag_type,
                 DragType::Right | DragType::BottomRight | DragType::TopRight
             ) {
-                let offset_x = actual_offset_x.clamp(-width, current_selection.1);
+                let offset_x = actual_offset_x.clamp(-width, current_selection.right);
 
                 let current_selection = self.current_selection.get();
 
-                self.current_selection.set((
-                    current_selection.0,
-                    -offset_x + current_selection.1,
-                    current_selection.2,
-                    current_selection.3,
-                ));
+                self.current_selection.set(Selection {
+                    top: current_selection.top,
+                    right: -offset_x + current_selection.right,
+                    bottom: current_selection.bottom,
+                    left: current_selection.left,
+                });
             }
 
             let current_selection = self.current_selection.get();
@@ -563,10 +597,10 @@ mod imp {
             self.obj().emit_by_name::<()>(
                 "crop-box-changed",
                 &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
+                    &current_selection.top,
+                    &current_selection.right,
+                    &current_selection.bottom,
+                    &current_selection.left,
                 ],
             );
 
@@ -577,226 +611,35 @@ mod imp {
             self.drag_type.set(None);
         }
 
-        fn bring_top_down(&self) {
-            let (_width, height) = (self.obj().width(), self.obj().height());
-
-            let current_selection = self.current_selection.get();
-
-            self.current_selection.set((
-                (current_selection.0 + PIXEL_KEYBOARD_MOVE / (height as f64))
-                    .clamp(0., 1. - current_selection.2),
-                current_selection.1,
-                current_selection.2,
-                current_selection.3,
-            ));
-
+        pub fn emit_crop_box_changed(&self) {
             let current_selection = self.current_selection.get();
 
             self.obj().emit_by_name::<()>(
                 "crop-box-changed",
                 &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
+                    &current_selection.top,
+                    &current_selection.right,
+                    &current_selection.bottom,
+                    &current_selection.left,
                 ],
             );
-
-            self.obj().queue_allocate();
         }
 
-        fn bring_top_up(&self) {
-            let (_width, height) = (self.obj().width(), self.obj().height());
+        fn move_crop_box(&self, side: Side, direction: MoveDirection) {
+            let (width, height) = (self.obj().width(), self.obj().height());
 
             let current_selection = self.current_selection.get();
 
-            self.current_selection.set((
-                (current_selection.0 - PIXEL_KEYBOARD_MOVE / (height as f64))
-                    .clamp(0., 1. - current_selection.2),
-                current_selection.1,
-                current_selection.2,
-                current_selection.3,
-            ));
+            let amount = PIXEL_KEYBOARD_MOVE
+                / match side {
+                    Side::Top | Side::Bottom => f64::from(height),
+                    Side::Left | Side::Right => f64::from(width),
+                };
 
-            let current_selection = self.current_selection.get();
+            self.current_selection
+                .set(current_selection.move_side(side, direction, amount));
 
-            self.obj().emit_by_name::<()>(
-                "crop-box-changed",
-                &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
-                ],
-            );
-
-            self.obj().queue_allocate();
-        }
-
-        fn bring_bottom_down(&self) {
-            let (_width, height) = (self.obj().width(), self.obj().height());
-
-            let current_selection = self.current_selection.get();
-
-            self.current_selection.set((
-                current_selection.0,
-                current_selection.1,
-                (current_selection.2 - PIXEL_KEYBOARD_MOVE / (height as f64))
-                    .clamp(0., 1. - current_selection.0),
-                current_selection.3,
-            ));
-
-            let current_selection = self.current_selection.get();
-
-            self.obj().emit_by_name::<()>(
-                "crop-box-changed",
-                &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
-                ],
-            );
-
-            self.obj().queue_allocate();
-        }
-
-        fn bring_bottom_up(&self) {
-            let (_width, height) = (self.obj().width(), self.obj().height());
-
-            let current_selection = self.current_selection.get();
-
-            self.current_selection.set((
-                current_selection.0,
-                current_selection.1,
-                (current_selection.2 + PIXEL_KEYBOARD_MOVE / (height as f64))
-                    .clamp(0., 1. - current_selection.0),
-                current_selection.3,
-            ));
-
-            let current_selection = self.current_selection.get();
-
-            self.obj().emit_by_name::<()>(
-                "crop-box-changed",
-                &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
-                ],
-            );
-
-            self.obj().queue_allocate();
-        }
-
-        fn bring_left_right(&self) {
-            let (width, _height) = (self.obj().width(), self.obj().height());
-
-            let current_selection = self.current_selection.get();
-
-            self.current_selection.set((
-                current_selection.0,
-                current_selection.1,
-                current_selection.2,
-                (current_selection.3 + PIXEL_KEYBOARD_MOVE / (width as f64))
-                    .clamp(0., 1. - current_selection.1),
-            ));
-
-            let current_selection = self.current_selection.get();
-
-            self.obj().emit_by_name::<()>(
-                "crop-box-changed",
-                &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
-                ],
-            );
-
-            self.obj().queue_allocate();
-        }
-
-        fn bring_left_left(&self) {
-            let (width, _height) = (self.obj().width(), self.obj().height());
-
-            let current_selection = self.current_selection.get();
-
-            self.current_selection.set((
-                current_selection.0,
-                current_selection.1,
-                current_selection.2,
-                (current_selection.3 - PIXEL_KEYBOARD_MOVE / (width as f64))
-                    .clamp(0., 1. - current_selection.1),
-            ));
-
-            let current_selection = self.current_selection.get();
-
-            self.obj().emit_by_name::<()>(
-                "crop-box-changed",
-                &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
-                ],
-            );
-
-            self.obj().queue_allocate();
-        }
-
-        fn bring_right_right(&self) {
-            let (width, _height) = (self.obj().width(), self.obj().height());
-
-            let current_selection = self.current_selection.get();
-
-            self.current_selection.set((
-                current_selection.0,
-                (current_selection.1 - PIXEL_KEYBOARD_MOVE / (width as f64))
-                    .clamp(0., 1. - current_selection.3),
-                current_selection.2,
-                current_selection.3,
-            ));
-
-            let current_selection = self.current_selection.get();
-
-            self.obj().emit_by_name::<()>(
-                "crop-box-changed",
-                &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
-                ],
-            );
-
-            self.obj().queue_allocate();
-        }
-
-        fn bring_right_left(&self) {
-            let (width, _height) = (self.obj().width(), self.obj().height());
-
-            let current_selection = self.current_selection.get();
-
-            self.current_selection.set((
-                current_selection.0,
-                (current_selection.1 + PIXEL_KEYBOARD_MOVE / (width as f64))
-                    .clamp(0., 1. - current_selection.3),
-                current_selection.2,
-                current_selection.3,
-            ));
-
-            let current_selection = self.current_selection.get();
-
-            self.obj().emit_by_name::<()>(
-                "crop-box-changed",
-                &[
-                    &current_selection.0,
-                    &current_selection.1,
-                    &current_selection.2,
-                    &current_selection.3,
-                ],
-            );
+            self.emit_crop_box_changed();
 
             self.obj().queue_allocate();
         }
@@ -832,48 +675,60 @@ glib::wrapper! {
 }
 
 impl Crop {
-    pub fn proportions(&self) -> (f64, f64, f64, f64) {
+    pub fn proportions(&self) -> Selection {
         self.imp().current_selection.get()
     }
 
-    pub fn set_proportions(&self, proportions: (f64, f64, f64, f64)) {
+    pub fn set_proportions(&self, proportions: Selection) {
         self.imp().current_selection.set(proportions);
-        self.emit_by_name::<()>(
-            "crop-box-changed",
-            &[
-                &proportions.0,
-                &proportions.1,
-                &proportions.2,
-                &proportions.3,
-            ],
-        );
+        self.imp().emit_crop_box_changed();
         self.queue_allocate();
     }
 
-    fn rotate_right_proportions(&self) -> (f64, f64, f64, f64) {
+    fn rotate_right_proportions(&self) -> Selection {
         let p = self.proportions();
-        (p.3, p.0, p.1, p.2)
+        Selection {
+            top: p.left,
+            right: p.top,
+            bottom: p.right,
+            left: p.bottom,
+        }
     }
 
-    fn rotate_left_proportions(&self) -> (f64, f64, f64, f64) {
+    fn rotate_left_proportions(&self) -> Selection {
         let p = self.proportions();
-        (p.1, p.2, p.3, p.0)
+        Selection {
+            top: p.right,
+            right: p.bottom,
+            bottom: p.left,
+            left: p.top,
+        }
     }
 
-    fn horizontal_flip_proportions(&self) -> (f64, f64, f64, f64) {
+    fn horizontal_flip_proportions(&self) -> Selection {
         let p = self.proportions();
-        (p.0, p.3, p.2, p.3)
+        Selection {
+            top: p.top,
+            right: p.left,
+            bottom: p.bottom,
+            left: p.right,
+        }
     }
 
-    fn vertical_flip_proportions(&self) -> (f64, f64, f64, f64) {
+    fn vertical_flip_proportions(&self) -> Selection {
         let p = self.proportions();
-        (p.2, p.1, p.0, p.3)
+        Selection {
+            top: p.bottom,
+            right: p.right,
+            bottom: p.top,
+            left: p.left,
+        }
     }
 
     pub fn orientation_transformation_proportions(
         &self,
         transformation: VideoOrientationTransformation,
-    ) -> (f64, f64, f64, f64) {
+    ) -> Selection {
         match transformation {
             VideoOrientationTransformation::RotateRight => self.rotate_right_proportions(),
             VideoOrientationTransformation::RotateLeft => self.rotate_left_proportions(),
@@ -883,6 +738,6 @@ impl Crop {
     }
 
     pub fn reset(&self) {
-        self.set_proportions((0.0, 0.0, 0.0, 0.0));
+        self.set_proportions(Selection::default());
     }
 }

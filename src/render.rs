@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
 };
 
@@ -14,10 +14,8 @@ use crate::{
     profiles::{ContainerFormat, ContainerSelection, OutputFormat},
 };
 
-pub struct RenderJob {
-    pub input_uri: url::Url,
-    pub output_path: PathBuf,
-    pub output_format: OutputFormat,
+pub struct InputSettings {
+    pub uri: url::Url,
     pub framerate: Framerate,
     pub scaled_dimension: Dimensions<u32>,
     pub orientation: VideoOrientation,
@@ -25,35 +23,32 @@ pub struct RenderJob {
     pub full_scaled_height: f64,
     pub crop_left: f64,
     pub crop_top: f64,
-    pub mute: bool,
     pub inpoint: ClockTime,
     pub duration: ClockTime,
+}
+
+pub struct RenderJob {
+    pub input_settings: InputSettings,
+    pub output_path: PathBuf,
+    pub output_format: OutputFormat,
+    pub mute: bool,
     pub sender: async_channel::Sender<Result<(u64, u64), ()>>,
     pub running_flag: Arc<AtomicBool>,
 }
 
-pub fn run_render(job: RenderJob) {
-    let RenderJob {
-        input_uri,
+pub fn run_render(
+    RenderJob {
+        input_settings,
         output_path,
         output_format,
-        framerate,
-        scaled_dimension,
-        orientation,
-        full_scaled_width,
-        full_scaled_height,
-        crop_left,
-        crop_top,
         mute,
-        inpoint,
-        duration,
         sender,
         running_flag,
-    } = job;
-
+    }: RenderJob,
+) {
     // When output == input, write to a temporary file to avoid truncating
     // the source before the pipeline reads it.
-    let same_file = output_path == input_uri.to_file_path().unwrap();
+    let same_file = output_path == input_settings.uri.to_file_path().unwrap();
     let render_path = if same_file {
         let mut temp = output_path.clone();
         temp.set_extension(format!(
@@ -72,7 +67,58 @@ pub fn run_render(job: RenderJob) {
         output_path.clone()
     };
 
-    let clip = ges::UriClip::new(input_uri.as_str()).unwrap();
+    let timeline = get_timeline(&input_settings);
+
+    let pipeline = ges::Pipeline::new();
+    pipeline.set_timeline(&timeline).unwrap();
+
+    set_render_settings_for_pipeline(
+        &output_format,
+        &input_settings.uri,
+        &render_path,
+        mute,
+        &pipeline,
+    );
+
+    pipeline.set_mode(ges::PipelineFlags::RENDER).unwrap();
+
+    setup_progress_event(
+        &timeline,
+        sender.clone(),
+        input_settings.duration,
+        running_flag.clone(),
+    );
+
+    pipeline.set_state(gst::State::Playing).unwrap();
+
+    let bus = pipeline
+        .bus()
+        .expect("Pipeline without bus. Shouldn't happen!");
+
+    info!("Starting pipeline");
+
+    let success = run_pipeline(&bus, &pipeline, &sender, &running_flag);
+
+    pipeline.set_state(gst::State::Null).unwrap();
+
+    cleanup_render_job(same_file, success, &render_path, &output_path);
+}
+
+fn get_timeline(
+    InputSettings {
+        uri,
+        framerate,
+        scaled_dimension,
+        orientation,
+        full_scaled_width,
+        full_scaled_height,
+        crop_left,
+        crop_top,
+        inpoint,
+        duration,
+    }: &InputSettings,
+) -> ges::Timeline {
+    let clip = ges::UriClip::new(uri.as_str()).unwrap();
 
     let timeline = ges::Timeline::new_audio_video();
 
@@ -82,12 +128,9 @@ pub fn run_render(job: RenderJob) {
     if let Some(track) = timeline.tracks().first() {
         track.set_restriction_caps(
             &gst::Caps::builder("video/x-raw")
-                .field(
-                    "framerate",
-                    gst::Fraction::new(framerate.nominator as i32, framerate.denominator as i32),
-                )
-                .field("width", scaled_dimension.width as i32)
-                .field("height", scaled_dimension.height as i32)
+                .field("framerate", framerate.as_gst_fraction())
+                .field("width", scaled_dimension.width.cast_signed())
+                .field("height", scaled_dimension.height.cast_signed())
                 .build(),
         );
         track.elements().into_iter().for_each(|track_element| {
@@ -101,13 +144,13 @@ pub fn run_render(job: RenderJob) {
             ges::prelude::TrackElementExt::set_child_property(
                 &track_element,
                 "width",
-                &(full_scaled_width as i32).to_value(),
+                &(*full_scaled_width as i32).to_value(),
             )
             .unwrap();
             ges::prelude::TrackElementExt::set_child_property(
                 &track_element,
                 "height",
-                &(full_scaled_height as i32).to_value(),
+                &(*full_scaled_height as i32).to_value(),
             )
             .unwrap();
             ges::prelude::TrackElementExt::set_child_property(
@@ -128,12 +171,19 @@ pub fn run_render(job: RenderJob) {
     clip.add_top_effect(&ges::Effect::new("videorate").unwrap(), 0)
         .ok();
 
-    clip.set_inpoint(inpoint);
-    clip.set_duration(Some(duration));
+    clip.set_inpoint(*inpoint);
+    clip.set_duration(Some(*duration));
 
-    let pipeline = ges::Pipeline::new();
-    pipeline.set_timeline(&timeline).unwrap();
+    timeline
+}
 
+fn set_render_settings_for_pipeline(
+    output_format: &OutputFormat,
+    input_uri: &url::Url,
+    render_path: &Path,
+    mute: bool,
+    pipeline: &ges::Pipeline,
+) {
     match output_format.container_selection {
         ContainerSelection::Same => {
             let profile = gstreamer_pbutils::EncodingProfile::from_discoverer(
@@ -156,7 +206,7 @@ pub fn run_render(job: RenderJob) {
                         discovered_caps.remove_fields(["width", "height", "framerate"]);
 
                         let mut caps = gst::Caps::builder(discovered_caps.name());
-                        for (name, value) in discovered_caps.into_iter() {
+                        for (name, value) in &*discovered_caps {
                             caps = caps.field(name, value.clone());
                         }
                         caps.build()
@@ -190,7 +240,7 @@ pub fn run_render(job: RenderJob) {
 
             pipeline
                 .set_render_settings(
-                    url::Url::from_file_path(&render_path).unwrap().as_str(),
+                    url::Url::from_file_path(render_path).unwrap().as_str(),
                     &container_profile.build(),
                 )
                 .unwrap();
@@ -198,7 +248,7 @@ pub fn run_render(job: RenderJob) {
         ContainerSelection::Format(ContainerFormat::GifContainer) => {
             pipeline
                 .set_render_settings(
-                    url::Url::from_file_path(&render_path).unwrap().as_str(),
+                    url::Url::from_file_path(render_path).unwrap().as_str(),
                     &output_format.video_encoding.unwrap().encoding_profile(),
                 )
                 .unwrap();
@@ -223,19 +273,20 @@ pub fn run_render(job: RenderJob) {
 
             pipeline
                 .set_render_settings(
-                    url::Url::from_file_path(&render_path).unwrap().as_str(),
+                    url::Url::from_file_path(render_path).unwrap().as_str(),
                     &container_profile.build(),
                 )
                 .unwrap();
         }
     }
+}
 
-    pipeline.set_mode(ges::PipelineFlags::RENDER).unwrap();
-
-    let sender_pad = sender.clone();
-
-    let another_running_flag = running_flag.clone();
-
+fn setup_progress_event(
+    timeline: &ges::Timeline,
+    sender: async_channel::Sender<Result<(u64, u64), ()>>,
+    duration: ClockTime,
+    another_running_flag: Arc<AtomicBool>,
+) {
     timeline
         .pads()
         .first()
@@ -243,7 +294,7 @@ pub fn run_render(job: RenderJob) {
         .add_probe(PadProbeType::DATA_DOWNSTREAM, move |_, info| {
             if let Some(PadProbeData::Buffer(data)) = &info.data
                 && let Some(pts) = data.pts()
-                && sender_pad
+                && sender
                     .send_blocking(Ok((pts.mseconds(), duration.mseconds())))
                     .is_err()
             {
@@ -254,7 +305,7 @@ pub fn run_render(job: RenderJob) {
                 .clone()
                 .load(std::sync::atomic::Ordering::SeqCst)
             {
-                if let Err(e) = sender_pad.send_blocking(Err(())) {
+                if let Err(e) = sender.send_blocking(Err(())) {
                     error!("Failed to send cancellation from pad probe: {e}");
                 }
                 return gst::PadProbeReturn::Drop;
@@ -262,15 +313,14 @@ pub fn run_render(job: RenderJob) {
 
             gst::PadProbeReturn::Ok
         });
+}
 
-    pipeline.set_state(gst::State::Playing).unwrap();
-
-    let bus = pipeline
-        .bus()
-        .expect("Pipeline without bus. Shouldn't happen!");
-
-    info!("Starting pipeline");
-
+fn run_pipeline(
+    bus: &gst::Bus,
+    pipeline: &ges::Pipeline,
+    sender: &async_channel::Sender<Result<(u64, u64), ()>>,
+    running_flag: &Arc<AtomicBool>,
+) -> bool {
     let mut success = false;
 
     for msg in bus.iter_timed(gst::ClockTime::NONE) {
@@ -287,7 +337,7 @@ pub fn run_render(job: RenderJob) {
             MessageView::Error(e) => {
                 error!(
                     "Error from {:?}: {} ({:?})",
-                    e.src().map(|s| s.path_string()),
+                    e.src().map(gst::prelude::GstObjectExt::path_string),
                     e.error(),
                     e.debug()
                 );
@@ -311,20 +361,22 @@ pub fn run_render(job: RenderJob) {
         }
     }
 
-    pipeline.set_state(gst::State::Null).unwrap();
+    success
+}
 
+fn cleanup_render_job(same_file: bool, success: bool, render_path: &Path, output_path: &Path) {
     if same_file {
         if success {
             info!(
                 "Renaming temporary file to output: {}",
                 output_path.display()
             );
-            if let Err(e) = std::fs::rename(&render_path, &output_path) {
+            if let Err(e) = std::fs::rename(render_path, output_path) {
                 error!("Failed to rename temporary file to output: {e}");
             }
         } else {
             info!("Removing temporary file: {}", render_path.display());
-            if let Err(e) = std::fs::remove_file(&render_path) {
+            if let Err(e) = std::fs::remove_file(render_path) {
                 error!("Failed to remove temporary file: {e}");
             }
         }

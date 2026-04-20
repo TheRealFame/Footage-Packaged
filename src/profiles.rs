@@ -32,25 +32,24 @@ pub enum AudioEncoding {
     Flac,
 }
 
-use AudioEncoding::*;
-use ContainerFormat::*;
-use VideoEncoding::*;
+use AudioEncoding::{Aac, Ac3, Flac, Opus, Vorbis};
+use ContainerFormat::{Best, GifContainer, Matroska, Mpeg, WebM};
+use VideoEncoding::{Av1, Gif, H264, H265, Vp8, Vp9};
 use gettextrs::gettext;
 use gst::prelude::*;
 
 impl ContainerFormat {
-    pub fn viable_video_encodings(&self) -> Vec<VideoEncoding> {
+    pub fn viable_video_encodings(self) -> Vec<VideoEncoding> {
         let video = match self {
             Best => vec![Av1],
-            Matroska => vec![Av1, Vp9, Vp8, H264, H265],
-            Mpeg => vec![Av1, Vp9, Vp8, H264, H265],
+            Matroska | Mpeg => vec![Av1, Vp9, Vp8, H264, H265],
             WebM => vec![Av1, Vp8, Vp9],
             GifContainer => vec![VideoEncoding::Gif],
         };
         video.into_iter().filter(|v| v.is_available()).collect()
     }
 
-    pub fn viable_audio_encodings(&self) -> Vec<AudioEncoding> {
+    pub fn viable_audio_encodings(self) -> Vec<AudioEncoding> {
         match self {
             Best => vec![Opus],
             Matroska => vec![Vorbis, Opus, Aac, Ac3, Flac],
@@ -60,27 +59,25 @@ impl ContainerFormat {
         }
     }
 
-    pub fn format(&self) -> &str {
+    pub fn format(self) -> &'static str {
         match self {
-            Best => "video/webm",
             Matroska => "video/x-matroska",
             Mpeg => "video/quicktime",
-            WebM => "video/webm",
+            Best | WebM => "video/webm",
             GifContainer => "image/gif",
         }
     }
 
-    pub fn extension(&self) -> &str {
+    pub fn extension(self) -> &'static str {
         match self {
-            Best => "webm",
             Matroska => "mkv",
             Mpeg => "mp4",
-            WebM => "webm",
+            Best | WebM => "webm",
             GifContainer => "gif",
         }
     }
 
-    pub fn for_display(&self) -> String {
+    pub fn for_display(self) -> String {
         match self {
             Best => gettext("Recommended (WEBM, AV1, Opus)"),
             Matroska => "MKV".to_owned(),
@@ -92,11 +89,11 @@ impl ContainerFormat {
 }
 
 impl ContainerSelection {
-    fn display_priority(&self) -> u8 {
+    fn display_priority(self) -> u8 {
         match self {
             ContainerSelection::Format(Best) => 0,
             ContainerSelection::Same => 1,
-            _ => 2,
+            ContainerSelection::Format(_) => 2,
         }
     }
 
@@ -111,7 +108,7 @@ impl ContainerSelection {
         selections
     }
 
-    pub fn for_display(&self) -> String {
+    pub fn for_display(self) -> String {
         match self {
             ContainerSelection::Same => gettext("Keep as-is"),
             ContainerSelection::Format(f) => f.for_display(),
@@ -133,7 +130,7 @@ impl VideoEncoding {
         }
     }
 
-    pub fn available_encoders(&self) -> Vec<gst::ElementFactory> {
+    pub fn available_encoders(self) -> Vec<gst::ElementFactory> {
         let caps = gst::Caps::builder(self.get_format()).build();
         let mut factories: Vec<gst::ElementFactory> = gst::ElementFactory::factories_with_type(
             gst::ElementFactoryType::ENCODER | gst::ElementFactoryType::VIDEO_ENCODER,
@@ -150,22 +147,20 @@ impl VideoEncoding {
         factories
     }
 
-    pub fn is_available(&self) -> bool {
+    pub fn is_available(self) -> bool {
         !self.available_encoders().is_empty()
     }
 
-    pub fn encoding_profile(&self) -> gstreamer_pbutils::EncodingVideoProfile {
+    pub fn encoding_profile(self) -> gstreamer_pbutils::EncodingVideoProfile {
         let caps = gst::Caps::builder(self.get_format()).build();
         gstreamer_pbutils::EncodingVideoProfile::builder(&caps).build()
     }
 
-    pub fn max_framerate(&self) -> f64 {
+    pub fn max_framerate(self) -> f64 {
         match self {
-            Av1 => 240.,
             Vp8 => 60.,
-            Vp9 => 240.,
-            H264 => 300.,
-            H265 => 300.,
+            Av1 | Vp9 => 240.,
+            H264 | H265 => 300.,
             Gif => 50.,
         }
     }

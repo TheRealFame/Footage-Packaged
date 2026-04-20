@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
 };
@@ -17,7 +17,8 @@ use crate::{
     info::{Dimensions, Framerate, get_info},
     orientation::{VideoOrientation, VideoOrientationTransformation},
     profiles::OutputFormat,
-    render::{RenderJob, run_render},
+    render::{InputSettings, RenderJob, run_render},
+    widgets::crop::Selection,
 };
 
 /// State that only exists while a video is loaded and being previewed.
@@ -38,7 +39,12 @@ pub struct LoadedVideo {
 }
 
 fn duration_to_clocktime(duration: Duration) -> ClockTime {
-    ClockTime::from_mseconds(duration.as_millis() as u64)
+    ClockTime::from_nseconds(
+        duration
+            .as_nanos()
+            .try_into()
+            .expect("Duration too large to convert to ClockTime"),
+    )
 }
 
 mod imp {
@@ -170,12 +176,11 @@ impl VideoPreview {
         self.emit_by_name::<()>("mode-changed", &[&false]);
     }
 
-    pub async fn load_path(
+    pub fn load_path(
         &self,
-        path: PathBuf,
+        path: &Path,
     ) -> Result<(Dimensions<u32>, Duration, Option<Framerate>, bool), VideoPreviewError> {
-        let uri =
-            url::Url::from_file_path(path.clone()).map_err(|_| VideoPreviewError::InvalidPath)?;
+        let uri = url::Url::from_file_path(path).map_err(|()| VideoPreviewError::InvalidPath)?;
 
         info!("Loading path: {}", uri.as_str());
 
@@ -183,13 +188,12 @@ impl VideoPreview {
         let info = discoverer.discover_uri(uri.as_str())?;
         let duration = info
             .duration()
-            .map(|d| Duration::from_millis(d.mseconds()))
-            .unwrap_or(Duration::ZERO);
+            .map_or(Duration::ZERO, |d| Duration::from_millis(d.mseconds()));
 
         let (dimensions, framerate, has_audio) =
             get_info(path.to_str().unwrap().to_owned()).ok_or(VideoPreviewError::NoInfo)?;
 
-        self.imp().crop_box.set_proportions((0., 0., 0., 0.));
+        self.imp().crop_box.reset();
         self.emit_by_name::<()>("mode-changed", &[&false]);
 
         let mute = !has_audio;
@@ -279,13 +283,13 @@ impl VideoPreview {
                         MessageView::Error(err) => {
                             error!(
                                 "Error from {:?}: {} ({:?})",
-                                err.src().map(|s| s.path_string()),
+                                err.src().map(gst::prelude::GstObjectExt::path_string),
                                 err.error(),
                                 err.debug()
                             );
                         }
                         _ => (),
-                    };
+                    }
 
                     glib::ControlFlow::Continue
                 }
@@ -487,41 +491,52 @@ impl VideoPreview {
             error!("save called with no video loaded");
             return;
         };
-        let (top, right, bottom, left) = self.imp().crop_box.proportions();
+        let Selection {
+            top,
+            right,
+            bottom,
+            left,
+        } = self.imp().crop_box.proportions();
 
         self.set_playing(false);
 
         info!(
-            "Converting with output path: {:?}, output format: {:?}, framerate: {:?}, scaled dimension: {:?}",
-            output_path, output_format, framerate, scaled_dimension
+            "Converting with output path: {output_path:?}, output format: {output_format:?}, framerate: {framerate:?}, scaled dimension: {scaled_dimension:?}",
+            output_path = output_path.display(),
         );
 
-        let dimensions: Dimensions<f64> = original_dimensions.into();
-
-        let dimensions = match orientation.is_width_height_swapped() {
-            false => dimensions,
-            true => dimensions.swap(),
+        let dimensions = if orientation.is_width_height_swapped() {
+            original_dimensions.swap()
+        } else {
+            original_dimensions
         };
 
-        let full_scaled_width = dimensions.width
-            * (scaled_dimension.width_f64() / (dimensions.width * (1. - right - left)));
-        let full_scaled_height = dimensions.height
-            * (scaled_dimension.height_f64() / (dimensions.height * (1. - top - bottom)));
+        let full_scaled_width = f64::from(dimensions.width)
+            * (scaled_dimension.width_f64() / (f64::from(dimensions.width) * (1. - right - left)));
+        let full_scaled_height = f64::from(dimensions.height)
+            * (scaled_dimension.height_f64()
+                / (f64::from(dimensions.height) * (1. - top - bottom)));
+
+        let duration = outpoint
+            .checked_sub(inpoint)
+            .expect("outpoint must be greater than or equal to inpoint");
 
         let job = RenderJob {
-            input_uri,
+            input_settings: InputSettings {
+                uri: input_uri,
+                framerate,
+                scaled_dimension,
+                orientation,
+                full_scaled_width,
+                full_scaled_height,
+                crop_left: left,
+                crop_top: top,
+                inpoint: duration_to_clocktime(inpoint),
+                duration: duration_to_clocktime(duration),
+            },
             output_path,
             output_format,
-            framerate,
-            scaled_dimension,
-            orientation,
-            full_scaled_width,
-            full_scaled_height,
-            crop_left: left,
-            crop_top: top,
             mute,
-            inpoint: duration_to_clocktime(inpoint),
-            duration: duration_to_clocktime(outpoint - inpoint),
             sender,
             running_flag,
         };

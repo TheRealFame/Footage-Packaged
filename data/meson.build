@@ -45,11 +45,11 @@ appdata_file = i18n.merge_file(
 )
 
 # Validate Appdata
-if appstream_util.found()
+if appstreamcli.found()
   test(
-    'validate-appdata', appstream_util,
+    'validate-appdata', appstreamcli,
     args: [
-      'validate', '--nonet', appdata_file.full_path()
+      'validate', '--no-net', appdata_file.full_path()
     ],
     depends: appdata_file,
   )
@@ -67,7 +67,7 @@ configure_file(
   install_dir: datadir / 'glib-2.0' / 'schemas'
 )
 
-# Validata GSchema
+# Validate GSchema
 if glib_compile_schemas.found()
   test(
     'validate-gschema', glib_compile_schemas,
@@ -76,3 +76,15 @@ if glib_compile_schemas.found()
     ],
   )
 endif
+
+# D-Bus service file
+service_conf = configuration_data()
+service_conf.set('app-id', application_id)
+service_conf.set('bindir', bindir)
+configure_file(
+  input: '@0@.service.in'.format(base_id),
+  output: '@0@.service'.format(application_id),
+  configuration: service_conf,
+  install: true,
+  install_dir: datadir / 'dbus-1' / 'services'
+)

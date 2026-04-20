@@ -9,8 +9,6 @@ use crate::info::get_debug_info;
 use crate::window::AppWindow;
 
 mod imp {
-    use crate::spawn;
-
     use super::*;
     use adw::subclass::prelude::AdwApplicationImpl;
 
@@ -39,7 +37,6 @@ mod imp {
             let obj = self.obj();
             obj.setup_gactions();
             obj.setup_accels();
-            obj.setup_settings();
         }
     }
 
@@ -64,13 +61,10 @@ mod imp {
                 application.present_main_window();
                 if let Some(window) = application.active_window() {
                     let file_path = file.path().unwrap();
-                    spawn!(async move {
-                        window
-                            .downcast_ref::<AppWindow>()
-                            .unwrap()
-                            .open_file(file_path)
-                            .await;
-                    });
+                    window
+                        .downcast_ref::<AppWindow>()
+                        .unwrap()
+                        .open_file(&file_path);
                 }
             }
             debug!("Application::open");
@@ -101,8 +95,6 @@ impl App {
     pub fn new() -> Self {
         Self::default()
     }
-
-    fn setup_settings(&self) {}
 
     fn setup_gactions(&self) {
         self.add_action_entries([
@@ -145,9 +137,9 @@ impl App {
     }
 
     pub fn run(&self) -> ExitCode {
-        info!("Footage ({})", APP_ID);
-        info!("Version: {} ({})", VERSION, PROFILE);
-        info!("Datadir: {}", PKGDATADIR);
+        info!("Footage ({APP_ID})");
+        info!("Version: {VERSION} ({PROFILE})");
+        info!("Datadir: {PKGDATADIR}");
 
         gst::init().unwrap();
         ges::init().unwrap();
