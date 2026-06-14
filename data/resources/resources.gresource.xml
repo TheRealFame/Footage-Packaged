@@ -7,7 +7,6 @@
         <file compressed="true" preprocess="xml-stripblanks">blueprints/crop.ui</file>
         <file compressed="true" preprocess="xml-stripblanks">blueprints/video-preview.ui</file>
         <file compressed="true">style.css</file>
-        <file compressed="true">style-hc.css</file>
         <file preprocess="xml-stripblanks">icons/hicolor/symbolic/apps/io.gitlab.adhami3310.Footage-symbolic.svg</file>
         <file preprocess="xml-stripblanks">icons/hicolor/scalable/apps/io.gitlab.adhami3310.Footage.svg</file>
         <file preprocess="xml-stripblanks">icons/hicolor/scalable/apps/io.gitlab.adhami3310.Footage.Devel.svg</file>

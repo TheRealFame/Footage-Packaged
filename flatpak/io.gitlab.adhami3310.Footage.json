@@ -64,19 +64,13 @@
                 },
                 {
                     "type": "file",
-                    "path": "x265_config.h"
-                },
-                {
-                    "type": "file",
                     "path": "x265.pc"
                 }
             ],
             "build-commands": [
                 "install -Dm644 source/x265.h /app/include/x265.h",
-                "install -Dm644 x265_config.h /app/include/x265_config.h",
                 "install -Dm644 x265.pc /app/lib/pkgconfig/x265.pc",
-                "ln -sf /usr/lib/*/codecs-extra/lib/libx265.so /app/lib/libx265.so",
-                "ln -sf /usr/lib/*/codecs-extra/lib/libx265.so.215 /app/lib/libx265.so.215"
+                "N=$(basename /usr/lib/*/codecs-extra/lib/libx265.so.* | sed 's/.*\\.so\\.//') && printf '#define X265_VERSION \"%s\"\\n#define X265_BUILD %s\\n#define X265_DEPTH 8\\n' \"$N\" \"$N\" > /app/include/x265_config.h && ln -sf /usr/lib/*/codecs-extra/lib/libx265.so /app/lib/libx265.so && ln -sf /usr/lib/*/codecs-extra/lib/libx265.so.$N /app/lib/libx265.so.$N"
             ]
         },
         {

@@ -1,5 +1,0 @@
-#define X265_VERSION "4.1"
-#define X265_BUILD 215
-#define X265_LATEST_TAG "4.1"
-#define X265_TAG_DISTANCE "0"
-#define X265_DEPTH 8

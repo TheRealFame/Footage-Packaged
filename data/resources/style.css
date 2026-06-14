@@ -37,7 +37,6 @@ timeline {
 
   min-width: 3px;
   min-height: 3px;
-  z-index: 5;
 }
 
 .crop-border {
@@ -66,4 +65,36 @@ timeline {
 
 .unit-drop .menu contents {
   min-width: 0px;
+}
+
+@media (prefers-contrast: more) {
+  .property box.title .title {
+    font-weight: 400;
+    font-size: 9pt;
+    opacity: 0.9;
+  }
+
+  .timeline {
+    box-shadow: inset 0 0 0 1px currentColor;
+  }
+
+  .timeline-selection {
+    border: 1px solid currentColor;
+  }
+
+  .property .subtitle {
+    font-size: inherit;
+    opacity: 1;
+  }
+
+  .timeline-handle {
+    box-shadow: none;
+  }
+
+  .timeline-position {
+    border: 1px solid color-mix(in srgb, var(--accent-bg-color) 50%, black);
+    background-color: white;
+    min-width: 4px;
+    border-radius: 2px;
+  }
 }
