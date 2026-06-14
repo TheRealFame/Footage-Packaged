@@ -274,7 +274,7 @@ fn format_container_profile(
 ) -> gstreamer_pbutils::EncodingContainerProfile {
     let video_profile = output_format.video_encoding.unwrap().encoding_profile();
 
-    let container_caps = gst::Caps::builder(container.format()).build();
+    let container_caps = container.container_caps();
 
     let mut container_profile =
         gstreamer_pbutils::EncodingContainerProfile::builder(&container_caps)
@@ -283,7 +283,7 @@ fn format_container_profile(
 
     if !mute {
         let audio_profile = gstreamer_pbutils::EncodingAudioProfile::builder(
-            &gst::Caps::builder(output_format.audio_encoding.unwrap().format()).build(),
+            &output_format.audio_encoding.unwrap().caps(),
         )
         .build();
         container_profile = container_profile.add_profile(audio_profile);

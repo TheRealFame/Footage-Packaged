@@ -68,6 +68,17 @@ impl ContainerFormat {
         }
     }
 
+    pub fn container_caps(self) -> gst::Caps {
+        let mut builder = gst::Caps::builder(self.format());
+        if matches!(self, Mpeg) {
+            // Bare "video/quicktime" lets encodebin pick qtmux, which writes a
+            // QuickTime/MOV file under our .mp4 extension. variant=iso forces
+            // mp4mux instead, so the container actually matches the extension.
+            builder = builder.field("variant", "iso");
+        }
+        builder.build()
+    }
+
     pub const fn extension(self) -> &'static str {
         match self {
             Matroska => "mkv",
@@ -186,6 +197,17 @@ impl AudioEncoding {
             Vorbis => "audio/x-vorbis",
             Flac => "audio/x-flac",
         }
+    }
+
+    pub fn caps(self) -> gst::Caps {
+        let mut builder = gst::Caps::builder(self.format());
+        if matches!(self, Aac) {
+            // Bare "audio/mpeg" also matches the MP3 and MP2 encoders (all rank
+            // primary), so the chosen codec is registry-order dependent.
+            // mpegversion=4 pins it to AAC.
+            builder = builder.field("mpegversion", 4i32);
+        }
+        builder.build()
     }
 
     pub const fn for_display(&self) -> &str {
