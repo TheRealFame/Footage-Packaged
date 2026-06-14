@@ -68,6 +68,20 @@
     <content_rating type="oars-1.1" />
 
     <releases>
+        <release version="1.4.0" date="2026-06-14">
+            <description translate="no">
+                <p>This release fixes several export issues and improves stability.</p>
+                <ul>
+                    <li>Exporting to MP4 now produces standard-compliant MP4 files with proper AAC audio.</li>
+                    <li>HEVC (H.265) export works again on current runtimes.</li>
+                    <li>Rendering and preview are faster and more reliable.</li>
+                    <li>The video preview now expands to fill the available space.</li>
+                    <li>Frame rates are displayed with more precision.</li>
+                    <li>More accurate file type detection when opening videos.</li>
+                    <li>Various crash and stability fixes.</li>
+                </ul>
+            </description>
+        </release>
         <release version="1.3.3" date="2025-01-20">
             <description translate="no">
                 <p>Update GNOME runtime to 49.</p>

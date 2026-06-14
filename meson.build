@@ -1,6 +1,6 @@
 project('footage',
   'rust',
-  version: '1.3.3',
+  version: '1.4.0',
   meson_version: '>= 0.59.0',
   license: 'GPLv3',
 )
