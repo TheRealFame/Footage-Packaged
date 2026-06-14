@@ -1,4 +1,4 @@
-use std::{process::Command, time::Duration};
+use std::time::Duration;
 
 use glib::translate::IntoGlib;
 use gst::prelude::*;
@@ -94,11 +94,13 @@ pub fn media_info(info: &DiscovererInfo) -> Option<MediaInfo> {
 }
 
 pub fn log_debug_info() {
-    let gst_inspect_output = Command::new("gst-inspect-1.0").output().unwrap();
-
-    let gst_inspect_stdout = std::str::from_utf8(&gst_inspect_output.stdout).unwrap();
-
-    info!("{gst_inspect_stdout}");
+    let registry = gst::Registry::get();
+    for plugin in registry.plugins() {
+        info!("{} ({})", plugin.plugin_name(), plugin.version());
+        for feature in registry.features_by_plugin(&plugin.plugin_name()) {
+            info!("  {}", feature.name());
+        }
+    }
 
     info!(
         "GStreamer version: {}.{}.{}.{}",
