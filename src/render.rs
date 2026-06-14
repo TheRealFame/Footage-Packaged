@@ -1,6 +1,9 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, atomic::AtomicBool},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use fraction::ToPrimitive;
@@ -143,42 +146,22 @@ fn get_timeline(
             )
             .unwrap();
 
-            ges::prelude::TrackElementExt::set_child_property(
-                &track_element,
-                "width",
-                &(full_scaled_width
-                    .to_i32()
-                    .expect("Width cannot be over i32::MAX"))
-                .to_value(),
-            )
-            .unwrap();
-            ges::prelude::TrackElementExt::set_child_property(
-                &track_element,
-                "height",
-                &(full_scaled_height
-                    .to_i32()
-                    .expect("Height cannot be over i32::MAX"))
-                .to_value(),
-            )
-            .unwrap();
-            ges::prelude::TrackElementExt::set_child_property(
-                &track_element,
-                "posx",
-                &((-crop_left * full_scaled_width)
-                    .to_i32()
-                    .expect("X position cannot be over i32::MAX"))
-                .to_value(),
-            )
-            .unwrap();
-            ges::prelude::TrackElementExt::set_child_property(
-                &track_element,
-                "posy",
-                &((-crop_top * full_scaled_height)
-                    .to_i32()
-                    .expect("Y position cannot be over i32::MAX"))
-                .to_value(),
-            )
-            .unwrap();
+            let set_dimension = |name: &str, value: NotNan<f64>| {
+                ges::prelude::TrackElementExt::set_child_property(
+                    &track_element,
+                    name,
+                    &value
+                        .to_i32()
+                        .unwrap_or_else(|| panic!("{name} cannot be over i32::MAX"))
+                        .to_value(),
+                )
+                .unwrap();
+            };
+
+            set_dimension("width", *full_scaled_width);
+            set_dimension("height", *full_scaled_height);
+            set_dimension("posx", -crop_left * full_scaled_width);
+            set_dimension("posy", -crop_top * full_scaled_height);
         });
     }
 
@@ -198,108 +181,114 @@ fn set_render_settings_for_pipeline(
     mute: bool,
     pipeline: &ges::Pipeline,
 ) {
-    match output_format.container_selection {
-        ContainerSelection::Same => {
-            let profile = gstreamer_pbutils::EncodingProfile::from_discoverer(
-                &Discoverer::new(gst::ClockTime::SECOND)
-                    .unwrap()
-                    .discover_uri(input_uri.as_str())
-                    .unwrap(),
-            )
-            .unwrap();
-
-            let (video_caps, audio_caps): (Vec<_>, Vec<_>) = profile
-                .input_caps()
-                .iter()
-                .map(|discovered_caps| {
-                    let discovered_caps = discovered_caps.to_owned();
-                    let is_video = discovered_caps.name().starts_with("video");
-
-                    if is_video {
-                        let mut discovered_caps = discovered_caps;
-                        discovered_caps.remove_fields(["width", "height", "framerate"]);
-
-                        let mut caps = gst::Caps::builder(discovered_caps.name());
-                        for (name, value) in &*discovered_caps {
-                            caps = caps.field(name, value.clone());
-                        }
-                        caps.build()
-                    } else {
-                        // For audio, only keep the codec name to avoid
-                        // over-constraining encoder selection.
-                        gst::Caps::builder(discovered_caps.name()).build()
-                    }
-                })
-                .partition(|c| c.to_string().starts_with("video"));
-
-            let profile_format = profile.format();
-
-            let mut container_profile =
-                gstreamer_pbutils::EncodingContainerProfile::builder(&profile_format)
-                    .name("container");
-
-            if let Some(video_cap) = video_caps.first() {
-                let video_profile =
-                    gstreamer_pbutils::EncodingVideoProfile::builder(video_cap).build();
-
-                container_profile = container_profile.add_profile(video_profile);
-            }
-
-            if !mute && let Some(audio_cap) = audio_caps.first() {
-                let audio_profile =
-                    gstreamer_pbutils::EncodingAudioProfile::builder(audio_cap).build();
-
-                container_profile = container_profile.add_profile(audio_profile);
-            }
-
-            pipeline
-                .set_render_settings(
-                    url::Url::from_file_path(render_path).unwrap().as_str(),
-                    &container_profile.build(),
-                )
-                .unwrap();
-        }
-        ContainerSelection::Format(ContainerFormat::GifContainer) => {
-            pipeline
-                .set_render_settings(
-                    url::Url::from_file_path(render_path).unwrap().as_str(),
-                    &output_format.video_encoding.unwrap().encoding_profile(),
-                )
-                .unwrap();
-        }
+    let profile: gstreamer_pbutils::EncodingProfile = match output_format.container_selection {
+        ContainerSelection::Same => same_container_profile(input_uri, mute).upcast(),
+        ContainerSelection::Format(ContainerFormat::GifContainer) => output_format
+            .video_encoding
+            .unwrap()
+            .encoding_profile()
+            .upcast(),
         ContainerSelection::Format(container) => {
-            let video_profile = output_format.video_encoding.unwrap().encoding_profile();
-
-            let container_caps = gst::Caps::builder(container.format()).build();
-
-            let mut container_profile =
-                gstreamer_pbutils::EncodingContainerProfile::builder(&container_caps)
-                    .name("container")
-                    .add_profile(video_profile);
-
-            if !mute {
-                let audio_profile = gstreamer_pbutils::EncodingAudioProfile::builder(
-                    &gst::Caps::builder(output_format.audio_encoding.unwrap().get_format()).build(),
-                )
-                .build();
-                container_profile = container_profile.add_profile(audio_profile);
-            }
-
-            pipeline
-                .set_render_settings(
-                    url::Url::from_file_path(render_path).unwrap().as_str(),
-                    &container_profile.build(),
-                )
-                .unwrap();
+            format_container_profile(output_format, container, mute).upcast()
         }
+    };
+
+    pipeline
+        .set_render_settings(
+            url::Url::from_file_path(render_path).unwrap().as_str(),
+            &profile,
+        )
+        .unwrap();
+}
+
+/// Builds a container profile that mirrors the source's codecs, used when the output container is "Same".
+fn same_container_profile(
+    input_uri: &url::Url,
+    mute: bool,
+) -> gstreamer_pbutils::EncodingContainerProfile {
+    let profile = gstreamer_pbutils::EncodingProfile::from_discoverer(
+        &Discoverer::new(gst::ClockTime::SECOND)
+            .unwrap()
+            .discover_uri(input_uri.as_str())
+            .unwrap(),
+    )
+    .unwrap();
+
+    let (video_caps, audio_caps): (Vec<_>, Vec<_>) = profile
+        .input_caps()
+        .iter()
+        .map(|discovered_caps| {
+            let discovered_caps = discovered_caps.to_owned();
+            let is_video = discovered_caps.name().starts_with("video");
+
+            if is_video {
+                let mut discovered_caps = discovered_caps;
+                discovered_caps.remove_fields(["width", "height", "framerate"]);
+
+                let mut caps = gst::Caps::builder(discovered_caps.name());
+                for (name, value) in &*discovered_caps {
+                    caps = caps.field(name, value.clone());
+                }
+                caps.build()
+            } else {
+                // For audio, only keep the codec name to avoid
+                // over-constraining encoder selection.
+                gst::Caps::builder(discovered_caps.name()).build()
+            }
+        })
+        .partition(|c| c.to_string().starts_with("video"));
+
+    let profile_format = profile.format();
+
+    let mut container_profile =
+        gstreamer_pbutils::EncodingContainerProfile::builder(&profile_format).name("container");
+
+    if let Some(video_cap) = video_caps.first() {
+        let video_profile = gstreamer_pbutils::EncodingVideoProfile::builder(video_cap).build();
+
+        container_profile = container_profile.add_profile(video_profile);
     }
+
+    if !mute && let Some(audio_cap) = audio_caps.first() {
+        let audio_profile = gstreamer_pbutils::EncodingAudioProfile::builder(audio_cap).build();
+
+        container_profile = container_profile.add_profile(audio_profile);
+    }
+
+    container_profile.build()
+}
+
+/// Builds a container profile for an explicit output container plus the selected video/audio encodings.
+fn format_container_profile(
+    output_format: &OutputFormat,
+    container: ContainerFormat,
+    mute: bool,
+) -> gstreamer_pbutils::EncodingContainerProfile {
+    let video_profile = output_format.video_encoding.unwrap().encoding_profile();
+
+    let container_caps = gst::Caps::builder(container.format()).build();
+
+    let mut container_profile =
+        gstreamer_pbutils::EncodingContainerProfile::builder(&container_caps)
+            .name("container")
+            .add_profile(video_profile);
+
+    if !mute {
+        let audio_profile = gstreamer_pbutils::EncodingAudioProfile::builder(
+            &gst::Caps::builder(output_format.audio_encoding.unwrap().get_format()).build(),
+        )
+        .build();
+        container_profile = container_profile.add_profile(audio_profile);
+    }
+
+    container_profile.build()
 }
 
 fn setup_progress_event(
     timeline: &ges::Timeline,
     sender: async_channel::Sender<Result<(u64, u64), ()>>,
     duration: ClockTime,
-    another_running_flag: Arc<AtomicBool>,
+    running_flag: Arc<AtomicBool>,
 ) {
     timeline
         .pads()
@@ -315,18 +304,20 @@ fn setup_progress_event(
                 return gst::PadProbeReturn::Drop;
             }
 
-            if !another_running_flag
-                .clone()
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
-                if let Err(e) = sender.send_blocking(Err(())) {
-                    error!("Failed to send cancellation from pad probe: {e}");
-                }
+            if !running_flag.load(Ordering::SeqCst) {
+                send_cancel(&sender, "cancellation from pad probe");
                 return gst::PadProbeReturn::Drop;
             }
 
             gst::PadProbeReturn::Ok
         });
+}
+
+/// Signals the receiver that the render was cancelled or failed, logging if the channel is gone.
+fn send_cancel(sender: &async_channel::Sender<Result<(u64, u64), ()>>, context: &str) {
+    if let Err(e) = sender.send_blocking(Err(())) {
+        error!("Failed to send {context}: {e}");
+    }
 }
 
 fn run_pipeline(
@@ -357,18 +348,14 @@ fn run_pipeline(
                 );
                 pipeline.set_state(gst::State::Null).unwrap();
 
-                if let Err(e) = sender.send_blocking(Err(())) {
-                    error!("Failed to send error: {e}");
-                }
+                send_cancel(sender, "error");
                 break;
             }
             _ => {
-                if !running_flag.load(std::sync::atomic::Ordering::SeqCst) {
+                if !running_flag.load(Ordering::SeqCst) {
                     pipeline.set_state(gst::State::Null).unwrap();
 
-                    if let Err(e) = sender.send_blocking(Err(())) {
-                        error!("Failed to send cancellation: {e}");
-                    }
+                    send_cancel(sender, "cancellation");
                     break;
                 }
             }
