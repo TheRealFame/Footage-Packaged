@@ -1,4 +1,9 @@
-use std::{os::fd::AsFd, path::PathBuf, time::Duration};
+use std::{
+    num::ParseIntError,
+    os::fd::AsFd,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use adw::prelude::*;
 use fraction::Ratio;
@@ -77,9 +82,9 @@ mod imp {
         #[template_child]
         pub resize_type: TemplateChild<gtk::DropDown>,
         #[template_child]
-        pub resize_scale_width_value: TemplateChild<gtk::Entry>,
+        pub resize_width_multiplier_percentage: TemplateChild<gtk::Entry>,
         #[template_child]
-        pub resize_scale_height_value: TemplateChild<gtk::Entry>,
+        pub resize_height_multiplier_percentage: TemplateChild<gtk::Entry>,
         #[template_child]
         pub resize_width_value: TemplateChild<gtk::Entry>,
         #[template_child]
@@ -115,6 +120,7 @@ mod imp {
 
         fn class_init(klass: &mut Self::Class) {
             Self::bind_template(klass);
+            super::AppWindow::bind_template_callbacks(klass);
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -179,12 +185,12 @@ impl AppWindow {
             .property("application", app)
             .build();
 
-        win.setup_callbacks();
+        win.setup_crop_box_listener();
 
         win.imp().container_row.set_model(Some(
             &ContainerSelection::get_all()
                 .into_iter()
-                .map(|m| m.for_display())
+                .map(super::profiles::ContainerSelection::for_display)
                 .collect_vec()
                 .to_list(),
         ));
@@ -235,217 +241,8 @@ impl AppWindow {
         ]);
     }
 
-    fn setup_callbacks(&self) {
-        let imp = self.imp();
-
-        imp.rotate_left_button.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.imp()
-                    .video_preview
-                    .transform_orientation(VideoOrientationTransformation::RotateLeft);
-            }
-        ));
-        imp.rotate_right_button.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.imp()
-                    .video_preview
-                    .transform_orientation(VideoOrientationTransformation::RotateRight);
-            }
-        ));
-        imp.horizontal_flip_button.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.imp()
-                    .video_preview
-                    .transform_orientation(VideoOrientationTransformation::HorizontalFlip);
-            }
-        ));
-        imp.vertical_flip_button.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.imp()
-                    .video_preview
-                    .transform_orientation(VideoOrientationTransformation::VerticalFlip);
-            }
-        ));
-        imp.audio_button.connect_toggled(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |b| {
-                if b.is_active() {
-                    b.set_icon_name("audio-volume-muted-symbolic");
-                    b.set_tooltip_text(Some(&gettext("Enable Audio")));
-                } else {
-                    b.set_icon_name("audio-volume-high-symbolic");
-                    b.set_tooltip_text(Some(&gettext("Disable Audio")));
-                }
-                // don't think about it
-                if b.is_visible() {
-                    this.imp().video_preview.set_mute(b.is_active());
-                }
-            }
-        ));
-        imp.save_button.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                spawn!(async move {
-                    this.save_dialog().await;
-                });
-            }
-        ));
-        imp.try_again_button.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.imp().video_preview.refresh_ui();
-            }
-        ));
-        imp.done_button.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.imp().stack.set_visible_child_name("welcome");
-                this.imp().back_edit.set_visible(false);
-            }
-        ));
-        imp.cancel_button.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.convert_cancel(false);
-            }
-        ));
-        imp.back_edit.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |go_back_button| {
-                this.imp().video_preview.refresh_ui();
-                this.imp().stack.set_visible_child_name("editing");
-                go_back_button.set_visible(false);
-            }
-        ));
-        imp.open_result.connect_clicked(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                let file =
-                    std::fs::File::open(this.imp().result_video_path.borrow().as_ref().unwrap())
-                        .unwrap();
-                runtime().spawn(async move {
-                    ashpd::desktop::open_uri::OpenFileRequest::default()
-                        .ask(true)
-                        .send_file(&file.as_fd())
-                        .await
-                        .ok();
-                });
-            }
-        ));
-        imp.container_row.connect_selected_notify(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.update_options();
-            }
-        ));
-        imp.video_encoding.connect_selected_notify(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.update_framerate_limit();
-            }
-        ));
-        imp.resize_type.connect_selected_notify(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |rt| {
-                match rt.selected() {
-                    0 => {
-                        this.imp().resize_width_value.set_visible(false);
-                        this.imp().resize_height_value.set_visible(false);
-                        this.imp().resize_scale_width_value.set_visible(true);
-                        this.imp().resize_scale_height_value.set_visible(true);
-                    }
-                    1 => {
-                        this.imp().resize_width_value.set_visible(true);
-                        this.imp().resize_height_value.set_visible(true);
-                        this.imp().resize_scale_width_value.set_visible(false);
-                        this.imp().resize_scale_height_value.set_visible(false);
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        ));
-        imp.resize_width_value.connect_changed(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.update_height_from_width();
-            }
-        ));
-        imp.resize_height_value.connect_changed(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                this.update_width_from_height();
-            }
-        ));
-
-        imp.resize_scale_height_value.connect_changed(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                // if this.imp().link_axis.is_active() && this.imp().link_axis.is_visible() {
-                let old_value = this
-                    .imp()
-                    .resize_scale_width_value
-                    .text()
-                    .as_str()
-                    .to_owned();
-                let new_value = this
-                    .imp()
-                    .resize_scale_height_value
-                    .text()
-                    .as_str()
-                    .to_owned();
-                if old_value != new_value && !new_value.is_empty() {
-                    this.imp().resize_scale_width_value.set_text(&new_value);
-                }
-                // }
-            }
-        ));
-
-        imp.resize_scale_width_value.connect_changed(clone!(
-            #[weak(rename_to=this)]
-            self,
-            move |_| {
-                // if this.imp().link_axis.is_active() && this.imp().link_axis.is_visible() {
-                let old_value = this
-                    .imp()
-                    .resize_scale_height_value
-                    .text()
-                    .as_str()
-                    .to_owned();
-                let new_value = this
-                    .imp()
-                    .resize_scale_width_value
-                    .text()
-                    .as_str()
-                    .to_owned();
-                if old_value != new_value && !new_value.is_empty() {
-                    this.imp().resize_scale_height_value.set_text(&new_value);
-                }
-                // }
-            }
-        ));
-
-        imp.video_preview.crop_box().connect_local(
+    fn setup_crop_box_listener(&self) {
+        self.imp().video_preview.crop_box().connect_local(
             "crop-box-changed",
             true,
             clone!(
@@ -484,159 +281,239 @@ impl AppWindow {
                 }
             ),
         );
+    }
 
-        imp.video_preview.connect_local(
-            "preview-ready",
-            true,
-            clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                None,
-                move |_| {
-                    this.mark_ui_as_ready();
+    #[template_callback]
+    fn on_rotate_left(&self) {
+        self.imp()
+            .video_preview
+            .transform_orientation(VideoOrientationTransformation::RotateLeft);
+    }
 
-                    None
-                }
-            ),
-        );
+    #[template_callback]
+    fn on_rotate_right(&self) {
+        self.imp()
+            .video_preview
+            .transform_orientation(VideoOrientationTransformation::RotateRight);
+    }
 
-        imp.video_preview.connect_local(
-            "orientation-flipped",
-            true,
-            clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                None,
-                move |_| {
-                    if let Some(video_dimensions) = this.imp().video_dimensions.get() {
-                        this.imp()
-                            .video_dimensions
-                            .set(Some(video_dimensions.swap()));
-                    }
-                    None
-                }
-            ),
-        );
+    #[template_callback]
+    fn on_horizontal_flip(&self) {
+        self.imp()
+            .video_preview
+            .transform_orientation(VideoOrientationTransformation::HorizontalFlip);
+    }
 
-        imp.timeline.connect_local(
-            "set-range",
-            true,
-            clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                None,
-                move |values| {
-                    let values = values.to_vec();
-                    let start = Duration::from_secs_f64(
-                        values.get(1).unwrap().get().expect("Expected a F64"),
-                    );
-                    let end = Duration::from_secs_f64(
-                        values.get(2).unwrap().get().expect("Expected a F64"),
-                    );
+    #[template_callback]
+    fn on_vertical_flip(&self) {
+        self.imp()
+            .video_preview
+            .transform_orientation(VideoOrientationTransformation::VerticalFlip);
+    }
 
-                    if this.imp().video_preview.inpoint() != start
-                        || this.imp().video_preview.outpoint() != end
-                    {
-                        this.imp().video_preview.set_range(start, end);
-                    }
-                    None
-                }
-            ),
-        );
+    #[template_callback]
+    fn on_audio_toggled(&self) {
+        let b = &self.imp().audio_button;
+        if b.is_active() {
+            b.set_icon_name("audio-volume-muted-symbolic");
+            b.set_tooltip_text(Some(&gettext("Enable Audio")));
+        } else {
+            b.set_icon_name("audio-volume-high-symbolic");
+            b.set_tooltip_text(Some(&gettext("Disable Audio")));
+        }
+        // don't think about it
+        if b.is_visible() {
+            self.imp().video_preview.set_mute(b.is_active());
+        }
+    }
 
-        imp.timeline.connect_local(
-            "moving",
-            true,
-            clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                None,
-                move |_| {
-                    this.imp().video_preview.set_playing(false);
-                    None
-                }
-            ),
-        );
-
-        imp.timeline.connect_local(
-            "set-position",
-            true,
-            clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                None,
-                move |values| {
-                    let position =
-                        Duration::from_secs_f64(values[1].get().expect("Expected a F64"));
-
-                    this.imp().video_preview.seek(position);
-
-                    None
-                }
-            ),
-        );
-
-        imp.video_preview.connect_local(
-            "mode-changed",
-            true,
-            clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                None,
-                move |values| {
-                    let playing: bool = values[1].get().expect("Expected a U64");
-
-                    if playing {
-                        this.imp().play_pause.set_icon_name("pause-symbolic");
-                        this.imp()
-                            .play_pause
-                            .set_tooltip_text(Some(&gettext("Pause")));
-                    } else {
-                        this.imp().play_pause.set_icon_name("play-symbolic");
-                        this.imp()
-                            .play_pause
-                            .set_tooltip_text(Some(&gettext("Play")));
-                    }
-
-                    None
-                }
-            ),
-        );
-
-        imp.video_preview.connect_local(
-            "set-position",
-            true,
-            clone!(
-                #[weak(rename_to=this)]
-                self,
-                #[upgrade_or]
-                None,
-                move |values| {
-                    let position =
-                        Duration::from_secs_f64(values[1].get().expect("Expected a F64"));
-
-                    this.imp().timeline.set_position(position);
-
-                    None
-                }
-            ),
-        );
-
-        imp.play_pause.connect_clicked(clone!(
+    #[template_callback]
+    fn on_save_clicked(&self) {
+        spawn!(clone!(
             #[weak(rename_to=this)]
             self,
-            move |b| {
-                this.imp()
-                    .video_preview
-                    .set_playing(b.icon_name().unwrap() == "play-symbolic");
+            async move {
+                this.save_dialog().await;
             }
         ));
+    }
+
+    #[template_callback]
+    fn on_try_again(&self) {
+        self.imp().video_preview.refresh_ui();
+    }
+
+    #[template_callback]
+    fn on_done(&self) {
+        self.imp().stack.set_visible_child_name("welcome");
+        self.imp().back_edit.set_visible(false);
+    }
+
+    #[template_callback]
+    fn on_cancel(&self) {
+        self.convert_cancel(false);
+    }
+
+    #[template_callback]
+    fn on_back_edit(&self) {
+        self.imp().video_preview.refresh_ui();
+        self.imp().stack.set_visible_child_name("editing");
+        self.imp().back_edit.set_visible(false);
+    }
+
+    #[template_callback]
+    fn on_open_result(&self) {
+        let file =
+            std::fs::File::open(self.imp().result_video_path.borrow().as_ref().unwrap()).unwrap();
+        runtime().spawn(async move {
+            ashpd::desktop::open_uri::OpenFileRequest::default()
+                .ask(true)
+                .send_file(&file.as_fd())
+                .await
+                .ok();
+        });
+    }
+
+    #[template_callback]
+    fn on_container_changed(&self) {
+        self.update_options();
+    }
+
+    #[template_callback]
+    fn on_video_encoding_changed(&self) {
+        self.update_framerate_limit();
+    }
+
+    #[template_callback]
+    fn on_resize_type_changed(&self) {
+        let imp = self.imp();
+        match imp.resize_type.selected() {
+            0 => {
+                imp.resize_width_value.set_visible(false);
+                imp.resize_height_value.set_visible(false);
+                imp.resize_width_multiplier_percentage.set_visible(true);
+                imp.resize_height_multiplier_percentage.set_visible(true);
+            }
+            1 => {
+                imp.resize_width_value.set_visible(true);
+                imp.resize_height_value.set_visible(true);
+                imp.resize_width_multiplier_percentage.set_visible(false);
+                imp.resize_height_multiplier_percentage.set_visible(false);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[template_callback]
+    fn on_resize_width_changed(&self) {
+        self.update_height_from_width();
+    }
+
+    #[template_callback]
+    fn on_resize_height_changed(&self) {
+        self.update_width_from_height();
+    }
+
+    #[template_callback]
+    fn on_resize_height_multiplier_percentage_changed(&self) {
+        let imp = self.imp();
+        let old_value = imp
+            .resize_width_multiplier_percentage
+            .text()
+            .as_str()
+            .to_owned();
+        let new_value = imp
+            .resize_height_multiplier_percentage
+            .text()
+            .as_str()
+            .to_owned();
+        if old_value != new_value && !new_value.is_empty() {
+            imp.resize_width_multiplier_percentage.set_text(&new_value);
+        }
+    }
+
+    #[template_callback]
+    fn on_resize_width_multiplier_percentage_changed(&self) {
+        let imp = self.imp();
+        let old_value = imp
+            .resize_height_multiplier_percentage
+            .text()
+            .as_str()
+            .to_owned();
+        let new_value = imp
+            .resize_width_multiplier_percentage
+            .text()
+            .as_str()
+            .to_owned();
+        if old_value != new_value && !new_value.is_empty() {
+            imp.resize_height_multiplier_percentage.set_text(&new_value);
+        }
+    }
+
+    #[template_callback]
+    fn on_preview_ready(&self) {
+        self.mark_ui_as_ready();
+    }
+
+    #[template_callback]
+    fn on_orientation_flipped(&self) {
+        if let Some(video_dimensions) = self.imp().video_dimensions.get() {
+            self.imp()
+                .video_dimensions
+                .set(Some(video_dimensions.swap()));
+        }
+    }
+
+    #[template_callback]
+    fn on_preview_mode_changed(&self, playing: bool) {
+        if playing {
+            self.imp().play_pause.set_icon_name("pause-symbolic");
+            self.imp()
+                .play_pause
+                .set_tooltip_text(Some(&gettext("Pause")));
+        } else {
+            self.imp().play_pause.set_icon_name("play-symbolic");
+            self.imp()
+                .play_pause
+                .set_tooltip_text(Some(&gettext("Play")));
+        }
+    }
+
+    #[template_callback]
+    fn on_preview_set_position(&self, position: u64) {
+        self.imp()
+            .timeline
+            .set_position(Duration::from_millis(position));
+    }
+
+    #[template_callback]
+    fn on_timeline_set_range(&self, start: f64, end: f64) {
+        let start = Duration::from_secs_f64(start);
+        let end = Duration::from_secs_f64(end);
+        if self.imp().video_preview.inpoint() != start || self.imp().video_preview.outpoint() != end
+        {
+            self.imp().video_preview.set_range(start, end);
+        }
+    }
+
+    #[template_callback]
+    fn on_timeline_moving(&self) {
+        self.imp().video_preview.set_playing(false);
+    }
+
+    #[template_callback]
+    fn on_timeline_set_position(&self, position: f64) {
+        self.imp()
+            .video_preview
+            .seek(Duration::from_secs_f64(position));
+    }
+
+    #[template_callback]
+    fn on_play_pause(&self) {
+        let icon = self.imp().play_pause.icon_name().unwrap();
+        self.imp()
+            .video_preview
+            .set_playing(icon == "play-symbolic");
     }
 
     fn update_width_from_height(&self) {
@@ -745,7 +622,7 @@ impl AppWindow {
         {
             let path = file.path().unwrap();
 
-            self.open_file(path).await;
+            self.open_file(&path);
         }
     }
 
@@ -763,7 +640,7 @@ impl AppWindow {
 
         if let Ok(file) = gtk::FileDialog::builder()
             .modal(true)
-            .initial_name(format!("{}.{}", input_path_stem, extension))
+            .initial_name(format!("{input_path_stem}.{extension}"))
             .build()
             .save_future(Some(self))
             .await
@@ -834,13 +711,39 @@ impl AppWindow {
     fn update_framerate_limit(&self) {
         let max_fps = self
             .selected_video_encoding()
-            .map(|e| e.max_framerate())
-            .unwrap_or(480.);
+            .map_or(480., super::profiles::VideoEncoding::max_framerate);
         let adj = self.imp().framerate_row.adjustment();
         adj.set_upper(max_fps);
         if adj.value() > max_fps {
             adj.set_value(max_fps);
         }
+    }
+
+    fn get_desired_dimensions(&self) -> Result<Dimensions<u32>, ParseIntError> {
+        let imp = self.imp();
+
+        Ok(match imp.resize_type.selected() {
+            0 => {
+                let width_multiplier_percentage: u32 =
+                    imp.resize_width_multiplier_percentage.text().parse()?;
+
+                let height_multiplier_percentage: u32 =
+                    imp.resize_height_multiplier_percentage.text().parse()?;
+
+                let selected_video_dimensions = imp.selected_video_dimensions.get().unwrap();
+
+                Dimensions {
+                    width: selected_video_dimensions.width * width_multiplier_percentage / 100,
+                    height: selected_video_dimensions.height * height_multiplier_percentage / 100,
+                }
+            }
+            1 => Dimensions {
+                width: imp.resize_width_value.text().parse::<u32>()?,
+                height: imp.resize_height_value.text().parse::<u32>()?,
+            },
+            _ => unreachable!(),
+        }
+        .as_even_dimensions())
     }
 
     fn save_file(&self, path: PathBuf) {
@@ -861,33 +764,6 @@ impl AppWindow {
             .stack
             .set_transition_type(gtk::StackTransitionType::Crossfade);
 
-        let (scaled_width, scaled_height) = match self.imp().resize_type.selected() {
-            0 => {
-                let (sw, sh): (u32, u32) = (
-                    self.imp().resize_scale_width_value.text().parse().unwrap(),
-                    self.imp().resize_scale_height_value.text().parse().unwrap(),
-                );
-
-                let selected_video_dimensions = self.imp().selected_video_dimensions.get().unwrap();
-
-                (
-                    selected_video_dimensions.width * sw / 100 / 2 * 2,
-                    selected_video_dimensions.height * sh / 100 / 2 * 2,
-                )
-            }
-            1 => (
-                self.imp().resize_width_value.text().parse::<u32>().unwrap() / 2 * 2,
-                self.imp()
-                    .resize_height_value
-                    .text()
-                    .parse::<u32>()
-                    .unwrap()
-                    / 2
-                    * 2,
-            ),
-            _ => unreachable!(),
-        };
-
         let running_flag = self.imp().running_flag.clone();
         let receiver_running_flag = running_flag.clone();
         running_flag.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -903,24 +779,17 @@ impl AppWindow {
                 video_encoding: self.selected_video_encoding(),
                 audio_encoding: self.selected_audio_encoding(),
             },
-            {
-                let f = Ratio::<i32>::approximate_float(self.imp().framerate_row.value());
-
-                match f {
-                    Some(r) => Framerate {
-                        nominator: *r.numer() as u32,
-                        denominator: *r.denom() as u32,
-                    },
-                    _ => Framerate {
-                        nominator: 30,
-                        denominator: 1,
-                    },
-                }
-            },
-            Dimensions {
-                width: scaled_width,
-                height: scaled_height,
-            },
+            Ratio::<i32>::approximate_float(self.imp().framerate_row.value()).map_or(
+                Framerate {
+                    nominator: 30,
+                    denominator: 1,
+                },
+                |ratio| Framerate {
+                    nominator: ratio.numer().cast_unsigned(),
+                    denominator: ratio.denom().cast_unsigned(),
+                },
+            ),
+            self.get_desired_dimensions().unwrap(),
             running_flag,
         );
 
@@ -949,7 +818,7 @@ impl AppWindow {
                                 .progress_bar
                                 .set_fraction(most_done as f64 / total as f64);
                         }
-                        Err(_) => {
+                        Err(()) => {
                             this.imp().stack.set_visible_child_name("failure");
                             this.imp()
                                 .running_flag
@@ -962,10 +831,10 @@ impl AppWindow {
         ));
     }
 
-    async fn create_ui(&self, path: PathBuf) {
+    fn create_ui(&self, path: &Path) {
         self.imp().video_preview.reset();
         let (dimensions, duration, framerate, has_audio) =
-            match self.imp().video_preview.load_path(path).await {
+            match self.imp().video_preview.load_path(path) {
                 Ok(result) => result,
                 Err(err) => {
                     error!("Failed to load video: {err}");
@@ -990,8 +859,12 @@ impl AppWindow {
             .set_range(Some((Duration::ZERO, duration)));
         self.imp().video_dimensions.set(Some(dimensions));
         self.imp().selected_video_dimensions.set(Some(dimensions));
-        self.imp().resize_scale_height_value.set_text("100");
-        self.imp().resize_scale_width_value.set_text("100");
+        self.imp()
+            .resize_height_multiplier_percentage
+            .set_text("100");
+        self.imp()
+            .resize_width_multiplier_percentage
+            .set_text("100");
         self.imp()
             .resize_height_value
             .set_text(&dimensions.height.to_string());
@@ -1000,11 +873,10 @@ impl AppWindow {
             .set_text(&dimensions.width.to_string());
         let max_fps = self
             .selected_video_encoding()
-            .map(|e| e.max_framerate())
-            .unwrap_or(240.);
+            .map_or(240., super::profiles::VideoEncoding::max_framerate);
         self.imp()
             .framerate_row
-            .set_value(framerate.map(|x| x.value().min(max_fps)).unwrap_or(30.));
+            .set_value(framerate.map_or(30., |x| x.value().min(max_fps)));
     }
 
     pub fn mark_ui_as_ready(&self) {
@@ -1015,15 +887,17 @@ impl AppWindow {
         self.imp().play_pause.grab_focus();
     }
 
-    pub async fn open_file(&self, path: PathBuf) {
-        self.imp().selected_video_path.replace(Some(path.clone()));
+    pub fn open_file(&self, path: &Path) {
+        self.imp()
+            .selected_video_path
+            .replace(Some(path.to_path_buf()));
 
         self.imp()
             .stack
             .set_transition_type(gtk::StackTransitionType::None);
         self.imp().stack.set_visible_child_name("loading");
 
-        self.create_ui(path).await;
+        self.create_ui(path);
     }
 
     fn show_about(&self) {
@@ -1078,9 +952,11 @@ impl SettingsStore for AppWindow {
 }
 
 fn generate_width_from_height(height: u32, image_dim: Dimensions<u32>) -> u32 {
-    ((height as f64) * (image_dim.width_f64()) / (image_dim.height_f64())).round() as u32
+    ((f64::from(height) * (image_dim.width_f64()) / (image_dim.height_f64())).round() as i32)
+        .cast_unsigned()
 }
 
 fn generate_height_from_width(width: u32, image_dim: Dimensions<u32>) -> u32 {
-    ((width as f64) * (image_dim.height_f64()) / (image_dim.width_f64())).round() as u32
+    ((f64::from(width) * (image_dim.height_f64()) / (image_dim.width_f64())).round() as i32)
+        .cast_unsigned()
 }

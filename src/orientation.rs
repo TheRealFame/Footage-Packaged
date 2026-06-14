@@ -20,15 +20,15 @@ pub enum VideoOrientationTransformation {
 }
 
 impl VideoOrientationTransformation {
-    pub fn does_swap_width_height(&self) -> bool {
+    pub const fn does_swap_width_height(self) -> bool {
         matches!(self, Self::RotateRight | Self::RotateLeft)
     }
 }
 
-use VideoOrientation::*;
+use VideoOrientation::{FR90, FR180, FR270, FlippedIdentity, Identity, R90, R180, R270};
 
 impl VideoOrientation {
-    pub fn transform(&self, transformation: VideoOrientationTransformation) -> Self {
+    pub const fn transformed(self, transformation: VideoOrientationTransformation) -> Self {
         match transformation {
             VideoOrientationTransformation::RotateRight => self.rotate_right(),
             VideoOrientationTransformation::RotateLeft => self.rotate_left(),
@@ -37,7 +37,7 @@ impl VideoOrientation {
         }
     }
 
-    fn rotate_right(&self) -> Self {
+    const fn rotate_right(self) -> Self {
         match self {
             Identity => R90,
             R90 => R180,
@@ -50,7 +50,7 @@ impl VideoOrientation {
         }
     }
 
-    fn rotate_left(&self) -> Self {
+    const fn rotate_left(self) -> Self {
         match self {
             R90 => Identity,
             R180 => R90,
@@ -63,7 +63,7 @@ impl VideoOrientation {
         }
     }
 
-    fn horizontal_flip(&self) -> Self {
+    const fn horizontal_flip(self) -> Self {
         match self {
             Identity => FlippedIdentity,
             FlippedIdentity => Identity,
@@ -76,7 +76,7 @@ impl VideoOrientation {
         }
     }
 
-    fn vertical_flip(&self) -> Self {
+    const fn vertical_flip(self) -> Self {
         match self {
             Identity => FR180,
             FR180 => Identity,
@@ -89,11 +89,11 @@ impl VideoOrientation {
         }
     }
 
-    pub fn is_width_height_swapped(&self) -> bool {
+    pub const fn is_width_height_swapped(self) -> bool {
         matches!(self, R90 | R270 | FR90 | FR270)
     }
 
-    pub fn to_gst_video_orientation_method(self) -> gstreamer_video::VideoOrientationMethod {
+    pub const fn to_gst_video_orientation_method(self) -> gstreamer_video::VideoOrientationMethod {
         match self {
             Identity => gstreamer_video::VideoOrientationMethod::Identity,
             R90 => gstreamer_video::VideoOrientationMethod::_90r,
