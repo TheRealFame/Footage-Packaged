@@ -5,6 +5,42 @@ use std::time::Duration;
 use glib::subclass::prelude::*;
 use gtk::glib;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum DragType {
+    Playback,
+    Start,
+    End,
+}
+
+/// Which edge of the selection a keyboard nudge moves.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum Handle {
+    Start,
+    End,
+}
+
+/// Direction of a keyboard nudge along the timeline.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum Nudge {
+    Back,
+    Forward,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum CursorType {
+    Normal,
+    StartEnd,
+}
+
+impl CursorType {
+    const fn gtk_cursor_name(self) -> &'static str {
+        match self {
+            Self::Normal => "default",
+            Self::StartEnd => "col-resize",
+        }
+    }
+}
+
 mod imp {
     use super::*;
     use glib::{clone, subclass::Signal};
@@ -19,28 +55,6 @@ mod imp {
 
     const TOLERANCE: f64 = 12.;
     const TIMELINE_KEYBOARD_MOVE: Duration = Duration::from_millis(250);
-
-    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-    enum DragType {
-        Playback,
-        Start,
-        End,
-    }
-
-    #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-    enum CursorType {
-        Normal,
-        StartEnd,
-    }
-
-    impl CursorType {
-        const fn gtk_cursor_name(self) -> &'static str {
-            match self {
-                Self::Normal => "default",
-                Self::StartEnd => "col-resize",
-            }
-        }
-    }
 
     #[derive(Debug, CompositeTemplate)]
     #[template(resource = "/io/gitlab/adhami3310/Footage/blueprints/timeline.ui")]
@@ -129,89 +143,9 @@ mod imp {
             // For some reason doesn't work from the .ui file.
             obj.set_overflow(gtk::Overflow::Hidden);
 
-            // Set up the drag gesture.
-            let gesture_drag = gtk::GestureDrag::new();
-            gesture_drag.connect_drag_begin({
-                let obj = obj.downgrade();
-                move |_, x, y| {
-                    let obj = obj.upgrade().unwrap();
-                    let imp = obj.imp();
-                    imp.on_drag_start(x, y);
-                }
-            });
-            gesture_drag.connect_drag_update({
-                let obj = obj.downgrade();
-                move |_, offset_x, offset_y| {
-                    let obj = obj.upgrade().unwrap();
-                    let imp = obj.imp();
-                    imp.on_drag_update(offset_x, offset_y);
-                }
-            });
-            gesture_drag.connect_drag_end({
-                let obj = obj.downgrade();
-                move |_, _, _| {
-                    let obj = obj.upgrade().unwrap();
-                    let imp = obj.imp();
-                    imp.on_drag_end();
-                }
-            });
-            obj.add_controller(gesture_drag.clone());
-            self.gesture_drag.set(gesture_drag).unwrap();
-
-            let event_controller_motion = gtk::EventControllerMotion::new();
-            event_controller_motion.connect_motion({
-                let obj = obj.downgrade();
-                move |_, x, y| {
-                    let obj = obj.upgrade().unwrap();
-                    let imp = obj.imp();
-                    imp.on_motion(x, y);
-                }
-            });
-            obj.add_controller(event_controller_motion);
-
-            let event_controller_keyboard = gtk::EventControllerKey::new();
-            event_controller_keyboard.connect_key_pressed(clone!(
-                #[weak(rename_to = this)]
-                self,
-                #[upgrade_or]
-                glib::Propagation::Stop,
-                move |_, k, _, _| {
-                    match k {
-                        Key::Left => {
-                            this.bring_start_back();
-                            glib::Propagation::Stop
-                        }
-                        Key::Right => {
-                            this.bring_start_forward();
-                            glib::Propagation::Stop
-                        }
-                        _ => glib::Propagation::Proceed,
-                    }
-                }
-            ));
-            self.left_handle.add_controller(event_controller_keyboard);
-
-            let event_controller_keyboard = gtk::EventControllerKey::new();
-            event_controller_keyboard.connect_key_pressed(clone!(
-                #[weak(rename_to = this)]
-                self,
-                #[upgrade_or]
-                glib::Propagation::Stop,
-                move |_, k, _, _| {
-                    match k {
-                        Key::Left => {
-                            this.bring_end_back();
-                            glib::Propagation::Stop
-                        }
-                        Key::Right => {
-                            this.bring_end_forward();
-                            glib::Propagation::Stop
-                        }
-                        _ => glib::Propagation::Proceed,
-                    }
-                }
-            ));
-            self.right_handle.add_controller(event_controller_keyboard);
+            self.setup_drag_gesture();
+            self.setup_motion_event();
+            self.setup_keyboard_events();
         }
 
         fn dispose(&self) {
@@ -229,9 +163,13 @@ mod imp {
                 return;
             }
 
+            let duration_secs = duration.as_secs_f64();
+            let time_to_x = |t: Duration| {
+                ((t.as_secs_f64() / duration_secs).clamp(0., 1.) * f64::from(width)) as i32
+            };
+
             let position = self.position.get();
-            let x = ((position.as_secs_f64() / duration.as_secs_f64()).clamp(0., 1.)
-                * f64::from(width)) as i32;
+            let x = time_to_x(position);
             let position_width = self
                 .box_timeline_position
                 .measure(gtk::Orientation::Horizontal, -1)
@@ -248,10 +186,8 @@ mod imp {
             );
 
             if let Some((start, end)) = self.range.get() {
-                let duration = duration.as_secs_f64();
-                let x = ((start.as_secs_f64() / duration).clamp(0., 1.) * f64::from(width)) as i32;
-                let x_end =
-                    ((end.as_secs_f64() / duration).clamp(0., 1.) * f64::from(width)) as i32;
+                let x = time_to_x(start);
+                let x_end = time_to_x(end);
 
                 let selection_width = self
                     .box_timeline_selection
@@ -273,12 +209,81 @@ mod imp {
     }
 
     impl Timeline {
+        /// Installs the pointer-drag gesture that seeks playback or resizes the selection.
+        fn setup_drag_gesture(&self) {
+            let obj = self.obj();
+
+            let gesture_drag = gtk::GestureDrag::new();
+            gesture_drag.connect_drag_begin({
+                let obj = obj.downgrade();
+                move |_, x, y| {
+                    obj.upgrade().unwrap().imp().on_drag_start(x, y);
+                }
+            });
+            gesture_drag.connect_drag_update({
+                let obj = obj.downgrade();
+                move |_, offset_x, offset_y| {
+                    obj.upgrade()
+                        .unwrap()
+                        .imp()
+                        .on_drag_update(offset_x, offset_y);
+                }
+            });
+            gesture_drag.connect_drag_end({
+                let obj = obj.downgrade();
+                move |_, _, _| {
+                    obj.upgrade().unwrap().imp().on_drag_end();
+                }
+            });
+            obj.add_controller(gesture_drag.clone());
+            self.gesture_drag.set(gesture_drag).unwrap();
+        }
+
+        /// Installs the motion controller that switches the cursor to a resize arrow near a handle.
+        fn setup_motion_event(&self) {
+            let obj = self.obj();
+
+            let event_controller_motion = gtk::EventControllerMotion::new();
+            event_controller_motion.connect_motion({
+                let obj = obj.downgrade();
+                move |_, x, y| {
+                    obj.upgrade().unwrap().imp().on_motion(x, y);
+                }
+            });
+            obj.add_controller(event_controller_motion);
+        }
+
+        /// Attaches an arrow-key controller to each handle so keyboard users can nudge the selection.
+        fn setup_keyboard_events(&self) {
+            self.left_handle
+                .add_controller(self.get_event_controller_key(Handle::Start));
+            self.right_handle
+                .add_controller(self.get_event_controller_key(Handle::End));
+        }
+
+        /// Key controller for a handle: left/right arrows nudge it back/forward along the timeline.
+        fn get_event_controller_key(&self, handle: Handle) -> gtk::EventControllerKey {
+            let event_controller_keyboard = gtk::EventControllerKey::new();
+            event_controller_keyboard.connect_key_pressed(clone!(
+                #[weak(rename_to = this)]
+                self,
+                #[upgrade_or]
+                glib::Propagation::Stop,
+                move |_, key, _, _| {
+                    let direction = match key {
+                        Key::Left => Nudge::Back,
+                        Key::Right => Nudge::Forward,
+                        _ => return glib::Propagation::Proceed,
+                    };
+                    this.nudge(handle, direction);
+                    glib::Propagation::Stop
+                }
+            ));
+            event_controller_keyboard
+        }
+
         pub fn set_range(&self, range: Option<(Duration, Duration)>) {
             self.range.set(range);
-            // if let Some((start, end)) = range {
-            //     self.left_handle.set_tooltip_text(Some(&format_time(start)));
-            //     self.right_handle.set_tooltip_text(Some(&format_time(end)));
-            // }
             self.refresh();
         }
 
@@ -300,19 +305,25 @@ mod imp {
             obj.queue_allocate();
         }
 
+        /// The x-coordinates of the selection's start and end handles in widget space,
+        /// or `None` when no range is set.
+        fn selection_edges(&self) -> Option<(f64, f64)> {
+            self.range.get()?;
+            let allocation = self
+                .box_timeline_selection
+                .compute_bounds(&self.box_timeline_selection.parent().unwrap())
+                .unwrap();
+            let start = f64::from(allocation.x());
+            let end = f64::from(allocation.x() + allocation.width());
+            Some((start, end))
+        }
+
         fn on_drag_start(&self, x: f64, _y: f64) {
             self.emit_moving();
             self.drag_start.set(x);
             self.drag_type.set(Some(DragType::Playback));
 
-            if self.range.get().is_some() {
-                let allocation = self
-                    .box_timeline_selection
-                    .compute_bounds(&self.box_timeline_selection.parent().unwrap())
-                    .unwrap();
-                let start = f64::from(allocation.x());
-                let end = f64::from(allocation.x() + allocation.width());
-
+            if let Some((start, end)) = self.selection_edges() {
                 if (x - end).abs() <= TOLERANCE {
                     self.drag_type.set(Some(DragType::End));
                     self.drag_start.set(end);
@@ -370,52 +381,40 @@ mod imp {
                 };
 
                 self.range.set(Some((start, end)));
-                // self.left_handle.set_tooltip_text(Some(&format_time(start)));
-                // self.right_handle.set_tooltip_text(Some(&format_time(end)));
                 self.refresh();
             }
         }
 
-        fn bring_start_forward(&self) {
+        /// Moves one handle of the selection by [`TIMELINE_KEYBOARD_MOVE`], clamped so it can't cross
+        /// the other handle or leave the clip, then seeks playback to the moved handle.
+        fn nudge(&self, handle: Handle, direction: Nudge) {
             let (start, end) = self.range.get().unwrap();
-            self.range
-                .set(Some(((start + TIMELINE_KEYBOARD_MOVE).min(end), end)));
-            let (start, end) = self.range.get().unwrap();
-            self.set_position(start);
-            self.emit_set_range(start, end);
-            self.emit_set_position(self.position.get());
+
+            let (range, anchor) = match handle {
+                Handle::Start => {
+                    let start = match direction {
+                        Nudge::Forward => (start + TIMELINE_KEYBOARD_MOVE).min(end),
+                        Nudge::Back => start.saturating_sub(TIMELINE_KEYBOARD_MOVE),
+                    };
+                    ((start, end), start)
+                }
+                Handle::End => {
+                    let end = match direction {
+                        Nudge::Forward => (end + TIMELINE_KEYBOARD_MOVE).min(self.duration.get()),
+                        Nudge::Back => end.saturating_sub(TIMELINE_KEYBOARD_MOVE).max(start),
+                    };
+                    ((start, end), end)
+                }
+            };
+
+            self.range.set(Some(range));
+            self.commit(anchor);
         }
 
-        fn bring_start_back(&self) {
+        /// Seeks playback to `anchor` and emits the current range and position.
+        fn commit(&self, anchor: Duration) {
+            self.set_position(anchor);
             let (start, end) = self.range.get().unwrap();
-            self.range
-                .set(Some(((start.saturating_sub(TIMELINE_KEYBOARD_MOVE)), end)));
-            let (start, end) = self.range.get().unwrap();
-            self.set_position(start);
-            self.emit_set_range(start, end);
-            self.emit_set_position(self.position.get());
-        }
-
-        fn bring_end_forward(&self) {
-            let (start, end) = self.range.get().unwrap();
-            self.range.set(Some((
-                start,
-                (end + TIMELINE_KEYBOARD_MOVE).min(self.duration.get()),
-            )));
-            let (start, end) = self.range.get().unwrap();
-            self.set_position(end);
-            self.emit_set_range(start, end);
-            self.emit_set_position(self.position.get());
-        }
-
-        fn bring_end_back(&self) {
-            let (start, end) = self.range.get().unwrap();
-            self.range.set(Some((
-                start,
-                (end.saturating_sub(TIMELINE_KEYBOARD_MOVE)).max(start),
-            )));
-            let (start, end) = self.range.get().unwrap();
-            self.set_position(end);
             self.emit_set_range(start, end);
             self.emit_set_position(self.position.get());
         }
@@ -460,18 +459,9 @@ mod imp {
                 return;
             }
 
-            let resizing_cursor = if self.range.get().is_some() {
-                let allocation = self
-                    .box_timeline_selection
-                    .compute_bounds(&self.box_timeline_selection.parent().unwrap())
-                    .unwrap();
-                let start = f64::from(allocation.x());
-                let end = f64::from(allocation.x() + allocation.width());
-
+            let resizing_cursor = self.selection_edges().is_some_and(|(start, end)| {
                 (x - end).abs() <= TOLERANCE || (x - start).abs() <= TOLERANCE
-            } else {
-                false
-            };
+            });
 
             let cursor_type = if resizing_cursor {
                 CursorType::StartEnd

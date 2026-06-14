@@ -233,8 +233,6 @@ enum MoveDirection {
     Negative,
 }
 
-impl Selection {}
-
 struct RelativeCoordinates {
     x: NotNan<f64>,
     y: NotNan<f64>,
@@ -543,7 +541,7 @@ mod imp {
         }
 
         /// Pixel coordinates of the four crop edges in widget space
-        fn positons(&self) -> RelativeSelectionCoordinates {
+        fn positions(&self) -> RelativeSelectionCoordinates {
             let crop = self.current_selection.get();
             let (width, height) = (self.obj().width(), self.obj().height());
             RelativeSelectionCoordinates {
@@ -560,7 +558,7 @@ mod imp {
 
         /// Classifies `(x, y)` as a side, corner, whole-box, or no-op drag based on which edges fall within [`TOLERANCE`] pixels.
         fn calculate_drag_type(&self, x: NotNan<f64>, y: NotNan<f64>) -> Option<DragType> {
-            let relative_selection_coordinates = self.positons();
+            let relative_selection_coordinates = self.positions();
             let drag_delta = DragDelta::new(x, y, &relative_selection_coordinates);
 
             match drag_delta.closest_sides(TOLERANCE).as_slice() {
