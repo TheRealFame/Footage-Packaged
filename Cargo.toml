@@ -6,7 +6,7 @@ rust-version = "1.88"
 
 [lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-# nursery = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
 # unwrap_used = "deny"
 wildcard_imports = "allow"
 future_not_send = "allow"
@@ -37,3 +37,5 @@ derivative = "2.2"
 async-channel = "2.5"
 tokio = { version = "1.52.0", features = ["rt", "rt-multi-thread"] }
 thiserror = "2"
+num-traits = "0.2.19"
+enum-map = "2.7.3"

@@ -1,3 +1,4 @@
+use ordered_float::NotNan;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -431,7 +432,7 @@ impl VideoPreview {
         let transformation_swaps_width_height = transformation.does_swap_width_height();
         if self
             .with_loaded_mut(|loaded| {
-                loaded.orientation = loaded.orientation.transform(transformation);
+                loaded.orientation = loaded.orientation.transformed(transformation);
                 if transformation_swaps_width_height {
                     loaded.current_dimensions = loaded.current_dimensions.swap();
                 }
@@ -444,11 +445,9 @@ impl VideoPreview {
         if transformation_swaps_width_height {
             self.emit_by_name::<()>("orientation-flipped", &[]);
         }
-        self.imp().crop_box.set_proportions(
-            self.imp()
-                .crop_box
-                .orientation_transformation_proportions(transformation),
-        );
+        self.imp()
+            .crop_box
+            .set_proportions(self.imp().crop_box.proportions_transformed(transformation));
     }
 
     pub fn set_mute(&self, mute: bool) {
@@ -511,11 +510,12 @@ impl VideoPreview {
             original_dimensions
         };
 
-        let full_scaled_width = f64::from(dimensions.width)
-            * (scaled_dimension.width_f64() / (f64::from(dimensions.width) * (1. - right - left)));
-        let full_scaled_height = f64::from(dimensions.height)
-            * (scaled_dimension.height_f64()
-                / (f64::from(dimensions.height) * (1. - top - bottom)));
+        let full_scaled_width = NotNan::from(dimensions.width)
+            * (NotNan::from(scaled_dimension.width)
+                / (NotNan::from(dimensions.width) * (NotNan::from(1) - right - left)));
+        let full_scaled_height = NotNan::from(dimensions.height)
+            * (NotNan::from(scaled_dimension.height)
+                / (NotNan::from(dimensions.height) * (NotNan::from(1) - top - bottom)));
 
         let duration = outpoint
             .checked_sub(inpoint)

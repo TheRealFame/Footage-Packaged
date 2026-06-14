@@ -36,17 +36,18 @@ impl Dimensions<u32> {
         f64::from(self.height)
     }
 
-    pub fn as_even_dimensions(self) -> Dimensions<u32> {
-        Dimensions {
+    pub const fn as_even_dimensions(self) -> Self {
+        Self {
             // Clear the least significant bit to make the dimension even
             width: self.width & !1,
             height: self.height & !1,
         }
     }
 }
+
 impl<T: Copy> Dimensions<T> {
-    pub fn swap(&self) -> Dimensions<T> {
-        Dimensions {
+    pub const fn swap(&self) -> Self {
+        Self {
             width: self.height,
             height: self.width,
         }

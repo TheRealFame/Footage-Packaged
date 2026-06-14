@@ -3,10 +3,12 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+use fraction::ToPrimitive;
 use ges::prelude::*;
 use gst::{ClockTime, PadProbeData, PadProbeType};
 use gstreamer_pbutils::Discoverer;
 use log::{error, info};
+use ordered_float::NotNan;
 
 use crate::{
     info::{Dimensions, Framerate},
@@ -19,10 +21,10 @@ pub struct InputSettings {
     pub framerate: Framerate,
     pub scaled_dimension: Dimensions<u32>,
     pub orientation: VideoOrientation,
-    pub full_scaled_width: f64,
-    pub full_scaled_height: f64,
-    pub crop_left: f64,
-    pub crop_top: f64,
+    pub full_scaled_width: NotNan<f64>,
+    pub full_scaled_height: NotNan<f64>,
+    pub crop_left: NotNan<f64>,
+    pub crop_top: NotNan<f64>,
     pub inpoint: ClockTime,
     pub duration: ClockTime,
 }
@@ -144,25 +146,37 @@ fn get_timeline(
             ges::prelude::TrackElementExt::set_child_property(
                 &track_element,
                 "width",
-                &(*full_scaled_width as i32).to_value(),
+                &(full_scaled_width
+                    .to_i32()
+                    .expect("Width cannot be over i32::MAX"))
+                .to_value(),
             )
             .unwrap();
             ges::prelude::TrackElementExt::set_child_property(
                 &track_element,
                 "height",
-                &(*full_scaled_height as i32).to_value(),
+                &(full_scaled_height
+                    .to_i32()
+                    .expect("Height cannot be over i32::MAX"))
+                .to_value(),
             )
             .unwrap();
             ges::prelude::TrackElementExt::set_child_property(
                 &track_element,
                 "posx",
-                &((-crop_left * full_scaled_width) as i32).to_value(),
+                &((-crop_left * full_scaled_width)
+                    .to_i32()
+                    .expect("X position cannot be over i32::MAX"))
+                .to_value(),
             )
             .unwrap();
             ges::prelude::TrackElementExt::set_child_property(
                 &track_element,
                 "posy",
-                &((-crop_top * full_scaled_height) as i32).to_value(),
+                &((-crop_top * full_scaled_height)
+                    .to_i32()
+                    .expect("Y position cannot be over i32::MAX"))
+                .to_value(),
             )
             .unwrap();
         });

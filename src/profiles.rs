@@ -59,7 +59,7 @@ impl ContainerFormat {
         }
     }
 
-    pub fn format(self) -> &'static str {
+    pub const fn format(self) -> &'static str {
         match self {
             Matroska => "video/x-matroska",
             Mpeg => "video/quicktime",
@@ -68,7 +68,7 @@ impl ContainerFormat {
         }
     }
 
-    pub fn extension(self) -> &'static str {
+    pub const fn extension(self) -> &'static str {
         match self {
             Matroska => "mkv",
             Mpeg => "mp4",
@@ -89,20 +89,20 @@ impl ContainerFormat {
 }
 
 impl ContainerSelection {
-    fn display_priority(self) -> u8 {
+    const fn display_priority(self) -> u8 {
         match self {
-            ContainerSelection::Format(Best) => 0,
-            ContainerSelection::Same => 1,
-            ContainerSelection::Format(_) => 2,
+            Self::Format(Best) => 0,
+            Self::Same => 1,
+            Self::Format(_) => 2,
         }
     }
 
-    pub fn get_all() -> Vec<ContainerSelection> {
-        let mut selections: Vec<ContainerSelection> = [Best, Matroska, Mpeg, WebM, GifContainer]
+    pub fn get_all() -> Vec<Self> {
+        let mut selections: Vec<Self> = [Best, Matroska, Mpeg, WebM, GifContainer]
             .into_iter()
             .filter(|c| !c.viable_video_encodings().is_empty())
-            .map(ContainerSelection::Format)
-            .chain(std::iter::once(ContainerSelection::Same))
+            .map(Self::Format)
+            .chain(std::iter::once(Self::Same))
             .collect();
         selections.sort_by_key(|s| s.display_priority());
         selections
@@ -110,16 +110,16 @@ impl ContainerSelection {
 
     pub fn for_display(self) -> String {
         match self {
-            ContainerSelection::Same => gettext("Keep as-is"),
-            ContainerSelection::Format(f) => f.for_display(),
+            Self::Same => gettext("Keep as-is"),
+            Self::Format(f) => f.for_display(),
         }
     }
 }
 
 impl VideoEncoding {
-    pub const ALL: &[VideoEncoding] = &[Av1, Vp8, Vp9, H264, H265, Gif];
+    pub const ALL: &[Self] = &[Av1, Vp8, Vp9, H264, H265, Gif];
 
-    pub fn get_format(&self) -> &str {
+    pub const fn get_format(&self) -> &str {
         match self {
             Av1 => "video/x-av1",
             Vp8 => "video/x-vp8",
@@ -156,7 +156,7 @@ impl VideoEncoding {
         gstreamer_pbutils::EncodingVideoProfile::builder(&caps).build()
     }
 
-    pub fn max_framerate(self) -> f64 {
+    pub const fn max_framerate(self) -> f64 {
         match self {
             Vp8 => 60.,
             Av1 | Vp9 => 240.,
@@ -165,7 +165,7 @@ impl VideoEncoding {
         }
     }
 
-    pub fn for_display(&self) -> &str {
+    pub const fn for_display(&self) -> &str {
         match self {
             Av1 => "AV1",
             Vp8 => "VP8",
@@ -178,7 +178,7 @@ impl VideoEncoding {
 }
 
 impl AudioEncoding {
-    pub fn get_format(&self) -> &str {
+    pub const fn get_format(&self) -> &str {
         match self {
             Aac => "audio/mpeg",
             Ac3 => "audio/x-ac3",
@@ -188,7 +188,7 @@ impl AudioEncoding {
         }
     }
 
-    pub fn for_display(&self) -> &str {
+    pub const fn for_display(&self) -> &str {
         match self {
             Aac => "AAC",
             Ac3 => "AC3",

@@ -779,20 +779,16 @@ impl AppWindow {
                 video_encoding: self.selected_video_encoding(),
                 audio_encoding: self.selected_audio_encoding(),
             },
-            {
-                let f = Ratio::<i32>::approximate_float(self.imp().framerate_row.value());
-
-                match f {
-                    Some(ratio) => Framerate {
-                        nominator: ratio.numer().cast_unsigned(),
-                        denominator: ratio.denom().cast_unsigned(),
-                    },
-                    _ => Framerate {
-                        nominator: 30,
-                        denominator: 1,
-                    },
-                }
-            },
+            Ratio::<i32>::approximate_float(self.imp().framerate_row.value()).map_or(
+                Framerate {
+                    nominator: 30,
+                    denominator: 1,
+                },
+                |ratio| Framerate {
+                    nominator: ratio.numer().cast_unsigned(),
+                    denominator: ratio.denom().cast_unsigned(),
+                },
+            ),
             self.get_desired_dimensions().unwrap(),
             running_flag,
         );

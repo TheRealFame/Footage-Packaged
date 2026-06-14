@@ -34,10 +34,10 @@ mod imp {
     }
 
     impl CursorType {
-        fn gtk_cursor_name(self) -> &'static str {
+        const fn gtk_cursor_name(self) -> &'static str {
             match self {
-                CursorType::Normal => "default",
-                CursorType::StartEnd => "col-resize",
+                Self::Normal => "default",
+                Self::StartEnd => "col-resize",
             }
         }
     }
