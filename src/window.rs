@@ -15,10 +15,12 @@ use log::{error, warn};
 
 use crate::{
     Listable,
-    info::{Dimensions, Framerate},
+    info::{Dimensions, Framerate, MediaInfo},
     orientation::VideoOrientationTransformation,
     profiles::{AudioEncoding, ContainerSelection, OutputFormat, VideoEncoding},
+    render::Progress,
     runtime, spawn,
+    widgets::timeline::TimeRange,
 };
 
 mod imp {
@@ -188,7 +190,7 @@ impl AppWindow {
         win.setup_crop_box_listener();
 
         win.imp().container_row.set_model(Some(
-            &ContainerSelection::get_all()
+            &ContainerSelection::all()
                 .into_iter()
                 .map(super::profiles::ContainerSelection::for_display)
                 .collect_vec()
@@ -492,7 +494,7 @@ impl AppWindow {
         let end = Duration::from_secs_f64(end);
         if self.imp().video_preview.inpoint() != start || self.imp().video_preview.outpoint() != end
         {
-            self.imp().video_preview.set_range(start, end);
+            self.imp().video_preview.set_range(TimeRange { start, end });
         }
     }
 
@@ -650,7 +652,7 @@ impl AppWindow {
     }
 
     fn selected_container(&self) -> ContainerSelection {
-        ContainerSelection::get_all()[self.imp().container_row.selected() as usize]
+        ContainerSelection::all()[self.imp().container_row.selected() as usize]
     }
 
     fn selected_video_encoding(&self) -> Option<VideoEncoding> {
@@ -719,7 +721,7 @@ impl AppWindow {
         }
     }
 
-    fn get_desired_dimensions(&self) -> Result<Dimensions<u32>, ParseIntError> {
+    fn desired_dimensions(&self) -> Result<Dimensions<u32>, ParseIntError> {
         let imp = self.imp();
 
         Ok(match imp.resize_type.selected() {
@@ -789,7 +791,7 @@ impl AppWindow {
                     denominator: ratio.denom().cast_unsigned(),
                 },
             ),
-            self.get_desired_dimensions().unwrap(),
+            self.desired_dimensions().unwrap(),
             running_flag,
         );
 
@@ -804,7 +806,7 @@ impl AppWindow {
                         break;
                     }
                     match p {
-                        Ok((done, total)) if done == total => {
+                        Ok(Progress { position, total }) if position == total => {
                             this.imp().stack.set_visible_child_name("success");
                             this.imp().back_edit.set_visible(true);
                             this.imp()
@@ -812,8 +814,8 @@ impl AppWindow {
                                 .store(false, std::sync::atomic::Ordering::SeqCst);
                             break;
                         }
-                        Ok((done, total)) => {
-                            most_done = std::cmp::max(done, most_done);
+                        Ok(Progress { position, total }) => {
+                            most_done = std::cmp::max(position, most_done);
                             this.imp()
                                 .progress_bar
                                 .set_fraction(most_done as f64 / total as f64);
@@ -833,15 +835,19 @@ impl AppWindow {
 
     fn create_ui(&self, path: &Path) {
         self.imp().video_preview.reset();
-        let (dimensions, duration, framerate, has_audio) =
-            match self.imp().video_preview.load_path(path) {
-                Ok(result) => result,
-                Err(err) => {
-                    error!("Failed to load video: {err}");
-                    self.imp().stack.set_visible_child_name("invalid");
-                    return;
-                }
-            };
+        let MediaInfo {
+            dimensions,
+            framerate,
+            duration,
+            has_audio,
+        } = match self.imp().video_preview.load_path(path) {
+            Ok(result) => result,
+            Err(err) => {
+                error!("Failed to load video: {err}");
+                self.imp().stack.set_visible_child_name("invalid");
+                return;
+            }
+        };
         if has_audio {
             if self.imp().audio_button.is_active() {
                 // don't think about it
@@ -854,9 +860,10 @@ impl AppWindow {
         }
         self.imp().timeline.set_position(Duration::ZERO);
         self.imp().timeline.set_duration(duration);
-        self.imp()
-            .timeline
-            .set_range(Some((Duration::ZERO, duration)));
+        self.imp().timeline.set_range(Some(TimeRange {
+            start: Duration::ZERO,
+            end: duration,
+        }));
         self.imp().video_dimensions.set(Some(dimensions));
         self.imp().selected_video_dimensions.set(Some(dimensions));
         self.imp()

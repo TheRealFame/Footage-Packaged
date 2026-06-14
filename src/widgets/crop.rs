@@ -18,19 +18,28 @@ pub struct Selection {
     pub left: NotNan<f64>,
 }
 
+/// Pixel insets from each edge of a region, the result of resolving a [`Selection`] against a size.
+#[derive(Debug, Clone, Copy)]
+pub struct EdgeInsets<T> {
+    pub top: T,
+    pub right: T,
+    pub bottom: T,
+    pub left: T,
+}
+
 impl Selection {
     /// Convert the normalized 0–1 insets into pixel insets (top, right, bottom, left) for a region of the given size.
     pub fn for_dimensions(
         &self,
         width: NotNan<f64>,
         height: NotNan<f64>,
-    ) -> (NotNan<f64>, NotNan<f64>, NotNan<f64>, NotNan<f64>) {
-        (
-            self.top * height,
-            self.right * width,
-            self.bottom * height,
-            self.left * width,
-        )
+    ) -> EdgeInsets<NotNan<f64>> {
+        EdgeInsets {
+            top: self.top * height,
+            right: self.right * width,
+            bottom: self.bottom * height,
+            left: self.left * width,
+        }
     }
 
     /// Same as [`Self::for_dimensions`], rounded and cast to `f32`.
@@ -38,35 +47,45 @@ impl Selection {
         &self,
         width: NotNan<f32>,
         height: NotNan<f32>,
-    ) -> (NotNan<f32>, NotNan<f32>, NotNan<f32>, NotNan<f32>) {
-        let (top, right, bottom, left) =
-            self.for_dimensions(NotNan::from(width), NotNan::from(height));
+    ) -> EdgeInsets<NotNan<f32>> {
+        let EdgeInsets {
+            top,
+            right,
+            bottom,
+            left,
+        } = self.for_dimensions(NotNan::from(width), NotNan::from(height));
 
-        (
-            Real::round(top.as_f32()),
-            Real::round(right.as_f32()),
-            Real::round(bottom.as_f32()),
-            Real::round(left.as_f32()),
-        )
+        EdgeInsets {
+            top: Real::round(top.as_f32()),
+            right: Real::round(right.as_f32()),
+            bottom: Real::round(bottom.as_f32()),
+            left: Real::round(left.as_f32()),
+        }
     }
 
     /// Same as [`Self::for_dimensions`], rounded and cast to `i32`.
-    pub fn for_dimensions_i32(&self, width: i32, height: i32) -> (i32, i32, i32, i32) {
-        let (top, right, bottom, left) =
-            self.for_dimensions(NotNan::from(width), NotNan::from(height));
+    pub fn for_dimensions_i32(&self, width: i32, height: i32) -> EdgeInsets<i32> {
+        let EdgeInsets {
+            top,
+            right,
+            bottom,
+            left,
+        } = self.for_dimensions(NotNan::from(width), NotNan::from(height));
 
-        (
-            top.to_i32()
+        EdgeInsets {
+            top: top
+                .to_i32()
                 .expect("since height is i32, and top is clamped to [0, height], this can't fail"),
-            right
+            right: right
                 .to_i32()
                 .expect("since width is i32, and right is clamped to [0, width], this can't fail"),
-            bottom.to_i32().expect(
+            bottom: bottom.to_i32().expect(
                 "since height is i32, and bottom is clamped to [0, height], this can't fail",
             ),
-            left.to_i32()
+            left: left
+                .to_i32()
                 .expect("since width is i32, and left is clamped to [0, width], this can't fail"),
-        )
+        }
     }
 
     pub const fn flipped_horizontal(&self) -> Self {
@@ -392,7 +411,12 @@ mod imp {
     impl WidgetImpl for Crop {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             let crop = self.current_selection.get();
-            let (top, right, bottom, left) = crop.for_dimensions_i32(width, height);
+            let EdgeInsets {
+                top,
+                right,
+                bottom,
+                left,
+            } = crop.for_dimensions_i32(width, height);
             self.container.size_allocate(
                 &gtk::Allocation::new(left, top, width - left - right, height - top - bottom),
                 baseline,
@@ -414,7 +438,12 @@ mod imp {
 
             let crop = self.current_selection.get();
 
-            let (top, right, bottom, left) = crop.for_dimensions_f32(width, height);
+            let EdgeInsets {
+                top,
+                right,
+                bottom,
+                left,
+            } = crop.for_dimensions_f32(width, height);
 
             let outer_crop_box_path = {
                 let outer_crop_box_builder = gsk::PathBuilder::new();
@@ -501,17 +530,17 @@ mod imp {
         /// Attaches an arrow-key controller to each corner handle so keyboard users can nudge the adjacent sides.
         fn setup_keyboard_events(&self) {
             self.top_left
-                .add_controller(self.get_event_controller_key(Corner::TopLeft));
+                .add_controller(self.event_controller_key(Corner::TopLeft));
             self.bottom_left
-                .add_controller(self.get_event_controller_key(Corner::BottomLeft));
+                .add_controller(self.event_controller_key(Corner::BottomLeft));
             self.top_right
-                .add_controller(self.get_event_controller_key(Corner::TopRight));
+                .add_controller(self.event_controller_key(Corner::TopRight));
             self.bottom_right
-                .add_controller(self.get_event_controller_key(Corner::BottomRight));
+                .add_controller(self.event_controller_key(Corner::BottomRight));
         }
 
         /// Key controller for a corner handle: vertical arrows move its vertical side, horizontal arrows its horizontal side.
-        fn get_event_controller_key(&self, corner: Corner) -> gtk::EventControllerKey {
+        fn event_controller_key(&self, corner: Corner) -> gtk::EventControllerKey {
             let event_controller_keyboard = gtk::EventControllerKey::new();
             let (vertical_side, horizontal_side) = corner.sides();
 

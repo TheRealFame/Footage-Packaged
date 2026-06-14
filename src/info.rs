@@ -1,8 +1,8 @@
-use std::process::Command;
+use std::{process::Command, time::Duration};
 
 use glib::translate::IntoGlib;
 use gst::prelude::*;
-use itertools::Itertools;
+use gstreamer_pbutils::DiscovererInfo;
 use log::info;
 
 #[derive(Debug)]
@@ -54,64 +54,46 @@ impl<T: Copy> Dimensions<T> {
     }
 }
 
-pub fn get_info(path: String) -> Option<(Dimensions<u32>, Option<Framerate>, bool)> {
-    let video_info = get_video_info(path.clone())?;
-    let audio_info = get_audio_info(path)?;
-    Some((video_info.0, video_info.1, audio_info))
+#[derive(Debug)]
+pub struct MediaInfo {
+    pub dimensions: Dimensions<u32>,
+    /// `None` for sources without a meaningful constant rate (e.g. still images),
+    /// in which case callers fall back to a default.
+    pub framerate: Option<Framerate>,
+    pub duration: Duration,
+    pub has_audio: bool,
 }
 
-fn get_audio_info(path: String) -> Option<bool> {
-    let o = Command::new("ffprobe")
-        .args(["-v", "error"])
-        .args(["-show_entries", "stream=codec_type"])
-        .args(["-of", "csv=p=0"])
-        .arg(path)
-        .output()
-        .ok()?;
+/// Extracts dimensions, framerate, duration, and audio presence from an already-discovered media file.
+///
+/// Returns `None` if the file has no video stream.
+pub fn media_info(info: &DiscovererInfo) -> Option<MediaInfo> {
+    let video = info.video_streams().into_iter().next()?;
 
-    let s = std::str::from_utf8(&o.stdout).ok()?;
+    let dimensions = Dimensions {
+        width: video.width(),
+        height: video.height(),
+    };
 
-    Some(s.lines().any(|x| x == "audio"))
+    let fraction = video.framerate();
+    let framerate = (fraction.numer() > 0 && fraction.denom() > 0).then(|| Framerate {
+        nominator: fraction.numer().cast_unsigned(),
+        denominator: fraction.denom().cast_unsigned(),
+    });
+
+    let duration = info
+        .duration()
+        .map_or(Duration::ZERO, |d| Duration::from_millis(d.mseconds()));
+
+    Some(MediaInfo {
+        dimensions,
+        framerate,
+        duration,
+        has_audio: !info.audio_streams().is_empty(),
+    })
 }
 
-fn get_video_info(path: String) -> Option<(Dimensions<u32>, Option<Framerate>)> {
-    let ffprobe_output = Command::new("ffprobe")
-        .args(["-v", "error"])
-        .args(["-select_streams", "v:0"])
-        .args(["-show_entries", "stream=width,height,r_frame_rate"])
-        .args(["-of", "csv=s=x:p=0"])
-        .arg(path)
-        .output()
-        .ok()?;
-
-    let ffprobe_stdout = std::str::from_utf8(&ffprobe_output.stdout).ok()?;
-
-    match ffprobe_stdout.trim().split('x').collect_vec()[..] {
-        [width, height, framerate] => Some((
-            Dimensions {
-                width: width.trim().parse().ok()?,
-                height: height.trim().parse().ok()?,
-            },
-            {
-                let (x, y) = framerate.split('/').collect_tuple()?;
-                Some(Framerate {
-                    nominator: x.trim().parse().ok()?,
-                    denominator: y.trim().parse().ok()?,
-                })
-            },
-        )),
-        [width, height] => Some((
-            Dimensions {
-                width: width.trim().parse().ok()?,
-                height: height.trim().parse().ok()?,
-            },
-            None,
-        )),
-        _ => None,
-    }
-}
-
-pub fn get_debug_info() {
+pub fn log_debug_info() {
     let gst_inspect_output = Command::new("gst-inspect-1.0").output().unwrap();
 
     let gst_inspect_stdout = std::str::from_utf8(&gst_inspect_output.stdout).unwrap();

@@ -19,6 +19,14 @@ use crate::{
     profiles::{ContainerFormat, ContainerSelection, OutputFormat},
 };
 
+/// Render progress reported back to the UI, in milliseconds. A message where `position == total`
+/// signals completion.
+#[derive(Debug, Clone, Copy)]
+pub struct Progress {
+    pub position: u64,
+    pub total: u64,
+}
+
 pub struct InputSettings {
     pub uri: url::Url,
     pub framerate: Framerate,
@@ -37,7 +45,7 @@ pub struct RenderJob {
     pub output_path: PathBuf,
     pub output_format: OutputFormat,
     pub mute: bool,
-    pub sender: async_channel::Sender<Result<(u64, u64), ()>>,
+    pub sender: async_channel::Sender<Result<Progress, ()>>,
     pub running_flag: Arc<AtomicBool>,
 }
 
@@ -72,7 +80,7 @@ pub fn run_render(
         output_path.clone()
     };
 
-    let timeline = get_timeline(&input_settings);
+    let timeline = build_timeline(&input_settings);
 
     let pipeline = ges::Pipeline::new();
     pipeline.set_timeline(&timeline).unwrap();
@@ -109,7 +117,7 @@ pub fn run_render(
     cleanup_render_job(same_file, success, &render_path, &output_path);
 }
 
-fn get_timeline(
+fn build_timeline(
     InputSettings {
         uri,
         framerate,
@@ -275,7 +283,7 @@ fn format_container_profile(
 
     if !mute {
         let audio_profile = gstreamer_pbutils::EncodingAudioProfile::builder(
-            &gst::Caps::builder(output_format.audio_encoding.unwrap().get_format()).build(),
+            &gst::Caps::builder(output_format.audio_encoding.unwrap().format()).build(),
         )
         .build();
         container_profile = container_profile.add_profile(audio_profile);
@@ -286,7 +294,7 @@ fn format_container_profile(
 
 fn setup_progress_event(
     timeline: &ges::Timeline,
-    sender: async_channel::Sender<Result<(u64, u64), ()>>,
+    sender: async_channel::Sender<Result<Progress, ()>>,
     duration: ClockTime,
     running_flag: Arc<AtomicBool>,
 ) {
@@ -298,7 +306,10 @@ fn setup_progress_event(
             if let Some(PadProbeData::Buffer(data)) = &info.data
                 && let Some(pts) = data.pts()
                 && sender
-                    .send_blocking(Ok((pts.mseconds(), duration.mseconds())))
+                    .send_blocking(Ok(Progress {
+                        position: pts.mseconds(),
+                        total: duration.mseconds(),
+                    }))
                     .is_err()
             {
                 return gst::PadProbeReturn::Drop;
@@ -314,7 +325,7 @@ fn setup_progress_event(
 }
 
 /// Signals the receiver that the render was cancelled or failed, logging if the channel is gone.
-fn send_cancel(sender: &async_channel::Sender<Result<(u64, u64), ()>>, context: &str) {
+fn send_cancel(sender: &async_channel::Sender<Result<Progress, ()>>, context: &str) {
     if let Err(e) = sender.send_blocking(Err(())) {
         error!("Failed to send {context}: {e}");
     }
@@ -323,7 +334,7 @@ fn send_cancel(sender: &async_channel::Sender<Result<(u64, u64), ()>>, context: 
 fn run_pipeline(
     bus: &gst::Bus,
     pipeline: &ges::Pipeline,
-    sender: &async_channel::Sender<Result<(u64, u64), ()>>,
+    sender: &async_channel::Sender<Result<Progress, ()>>,
     running_flag: &Arc<AtomicBool>,
 ) -> bool {
     let mut success = false;
@@ -334,7 +345,10 @@ fn run_pipeline(
         match msg.view() {
             MessageView::Eos(..) => {
                 success = true;
-                if let Err(e) = sender.send_blocking(Ok((1, 1))) {
+                if let Err(e) = sender.send_blocking(Ok(Progress {
+                    position: 1,
+                    total: 1,
+                })) {
                     error!("Failed to send EOS: {e}");
                 }
                 break;

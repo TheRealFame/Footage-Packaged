@@ -15,11 +15,11 @@ use gtk::{gdk, gio, glib, subclass::prelude::*};
 use log::{error, info};
 
 use crate::{
-    info::{Dimensions, Framerate, get_info},
+    info::{Dimensions, Framerate, MediaInfo, media_info},
     orientation::{VideoOrientation, VideoOrientationTransformation},
     profiles::OutputFormat,
-    render::{InputSettings, RenderJob, run_render},
-    widgets::crop::Selection,
+    render::{InputSettings, Progress, RenderJob, run_render},
+    widgets::{crop::Selection, timeline::TimeRange},
 };
 
 /// State that only exists while a video is loaded and being previewed.
@@ -89,8 +89,6 @@ mod imp {
     }
 
     impl ObjectImpl for VideoPreview {
-        fn constructed(&self) {}
-
         fn signals() -> &'static [Signal] {
             use once_cell::sync::Lazy;
             static SIGNALS: Lazy<[Signal; 4]> = Lazy::new(|| {
@@ -125,12 +123,6 @@ pub struct VideoPreview(ObjectSubclass<imp::VideoPreview>)
     @implements gio::ActionMap, gio::ActionGroup, gtk::Root, gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
-impl Default for VideoPreview {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[derive(Debug, Error)]
 pub enum VideoPreviewError {
     #[error("GStreamer error: {0}")]
@@ -143,10 +135,6 @@ pub enum VideoPreviewError {
 
 #[gtk::template_callbacks]
 impl VideoPreview {
-    pub fn new() -> Self {
-        glib::Object::builder::<VideoPreview>().build()
-    }
-
     pub fn crop_box(&self) -> &crate::widgets::crop::Crop {
         &self.imp().crop_box
     }
@@ -177,31 +165,27 @@ impl VideoPreview {
         self.emit_by_name::<()>("mode-changed", &[&false]);
     }
 
-    pub fn load_path(
-        &self,
-        path: &Path,
-    ) -> Result<(Dimensions<u32>, Duration, Option<Framerate>, bool), VideoPreviewError> {
+    pub fn load_path(&self, path: &Path) -> Result<MediaInfo, VideoPreviewError> {
         let uri = url::Url::from_file_path(path).map_err(|()| VideoPreviewError::InvalidPath)?;
 
         info!("Loading path: {}", uri.as_str());
 
         let discoverer = Discoverer::new(ClockTime::from_seconds(10))?;
         let info = discoverer.discover_uri(uri.as_str())?;
-        let duration = info
-            .duration()
-            .map_or(Duration::ZERO, |d| Duration::from_millis(d.mseconds()));
 
-        let (dimensions, framerate, has_audio) =
-            get_info(path.to_str().unwrap().to_owned()).ok_or(VideoPreviewError::NoInfo)?;
+        let media_info = media_info(&info).ok_or(VideoPreviewError::NoInfo)?;
 
         self.imp().crop_box.reset();
         self.emit_by_name::<()>("mode-changed", &[&false]);
 
-        let mute = !has_audio;
+        self.build_pipeline(
+            uri,
+            media_info.dimensions,
+            media_info.duration,
+            !media_info.has_audio,
+        );
 
-        self.build_pipeline(uri, dimensions, duration, mute);
-
-        Ok((dimensions, duration, framerate, has_audio))
+        Ok(media_info)
     }
 
     fn build_pipeline(
@@ -408,10 +392,10 @@ impl VideoPreview {
         }
     }
 
-    pub fn set_range(&self, start: Duration, end: Duration) {
+    pub fn set_range(&self, range: TimeRange) {
         self.with_loaded_mut(|loaded| {
-            loaded.inpoint = start;
-            loaded.outpoint = end;
+            loaded.inpoint = range.start;
+            loaded.outpoint = range.end;
         });
     }
 
@@ -429,7 +413,7 @@ impl VideoPreview {
     }
 
     pub fn transform_orientation(&self, transformation: VideoOrientationTransformation) {
-        let transformation_swaps_width_height = transformation.does_swap_width_height();
+        let transformation_swaps_width_height = transformation.swaps_width_height();
         if self
             .with_loaded_mut(|loaded| {
                 loaded.orientation = loaded.orientation.transformed(transformation);
@@ -469,7 +453,7 @@ impl VideoPreview {
     pub fn save(
         &self,
         output_path: PathBuf,
-        sender: async_channel::Sender<Result<(u64, u64), ()>>,
+        sender: async_channel::Sender<Result<Progress, ()>>,
         output_format: OutputFormat,
         framerate: Framerate,
         scaled_dimension: Dimensions<u32>,

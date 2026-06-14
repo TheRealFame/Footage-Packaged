@@ -20,7 +20,7 @@ pub enum VideoOrientationTransformation {
 }
 
 impl VideoOrientationTransformation {
-    pub const fn does_swap_width_height(self) -> bool {
+    pub const fn swaps_width_height(self) -> bool {
         matches!(self, Self::RotateRight | Self::RotateLeft)
     }
 }

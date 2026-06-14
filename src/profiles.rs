@@ -97,7 +97,7 @@ impl ContainerSelection {
         }
     }
 
-    pub fn get_all() -> Vec<Self> {
+    pub fn all() -> Vec<Self> {
         let mut selections: Vec<Self> = [Best, Matroska, Mpeg, WebM, GifContainer]
             .into_iter()
             .filter(|c| !c.viable_video_encodings().is_empty())
@@ -119,7 +119,7 @@ impl ContainerSelection {
 impl VideoEncoding {
     pub const ALL: &[Self] = &[Av1, Vp8, Vp9, H264, H265, Gif];
 
-    pub const fn get_format(&self) -> &str {
+    pub const fn format(&self) -> &str {
         match self {
             Av1 => "video/x-av1",
             Vp8 => "video/x-vp8",
@@ -131,7 +131,7 @@ impl VideoEncoding {
     }
 
     pub fn available_encoders(self) -> Vec<gst::ElementFactory> {
-        let caps = gst::Caps::builder(self.get_format()).build();
+        let caps = gst::Caps::builder(self.format()).build();
         let mut factories: Vec<gst::ElementFactory> = gst::ElementFactory::factories_with_type(
             gst::ElementFactoryType::ENCODER | gst::ElementFactoryType::VIDEO_ENCODER,
             gst::Rank::MARGINAL,
@@ -152,7 +152,7 @@ impl VideoEncoding {
     }
 
     pub fn encoding_profile(self) -> gstreamer_pbutils::EncodingVideoProfile {
-        let caps = gst::Caps::builder(self.get_format()).build();
+        let caps = gst::Caps::builder(self.format()).build();
         gstreamer_pbutils::EncodingVideoProfile::builder(&caps).build()
     }
 
@@ -178,7 +178,7 @@ impl VideoEncoding {
 }
 
 impl AudioEncoding {
-    pub const fn get_format(&self) -> &str {
+    pub const fn format(&self) -> &str {
         match self {
             Aac => "audio/mpeg",
             Ac3 => "audio/x-ac3",

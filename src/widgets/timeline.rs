@@ -5,6 +5,13 @@ use std::time::Duration;
 use glib::subclass::prelude::*;
 use gtk::glib;
 
+/// The trimmed-in/out selection on the timeline.
+#[derive(Debug, Clone, Copy)]
+pub struct TimeRange {
+    pub start: Duration,
+    pub end: Duration,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum DragType {
     Playback,
@@ -72,7 +79,7 @@ mod imp {
 
         position: Cell<Duration>,
         duration: Cell<Duration>,
-        range: Cell<Option<(Duration, Duration)>>,
+        range: Cell<Option<TimeRange>>,
         gesture_drag: OnceCell<gtk::GestureDrag>,
         drag_start: Cell<f64>,
         drag_type: Cell<Option<DragType>>,
@@ -105,7 +112,10 @@ mod imp {
 
                 position: Cell::new(Duration::ZERO),
                 duration: Cell::new(Duration::ZERO),
-                range: Cell::new(Some((Duration::ZERO, Duration::ZERO))),
+                range: Cell::new(Some(TimeRange {
+                    start: Duration::ZERO,
+                    end: Duration::ZERO,
+                })),
                 gesture_drag: OnceCell::new(),
                 drag_start: Cell::new(0.),
                 drag_type: Cell::new(None),
@@ -185,7 +195,7 @@ mod imp {
                 baseline,
             );
 
-            if let Some((start, end)) = self.range.get() {
+            if let Some(TimeRange { start, end }) = self.range.get() {
                 let x = time_to_x(start);
                 let x_end = time_to_x(end);
 
@@ -256,13 +266,13 @@ mod imp {
         /// Attaches an arrow-key controller to each handle so keyboard users can nudge the selection.
         fn setup_keyboard_events(&self) {
             self.left_handle
-                .add_controller(self.get_event_controller_key(Handle::Start));
+                .add_controller(self.event_controller_key(Handle::Start));
             self.right_handle
-                .add_controller(self.get_event_controller_key(Handle::End));
+                .add_controller(self.event_controller_key(Handle::End));
         }
 
         /// Key controller for a handle: left/right arrows nudge it back/forward along the timeline.
-        fn get_event_controller_key(&self, handle: Handle) -> gtk::EventControllerKey {
+        fn event_controller_key(&self, handle: Handle) -> gtk::EventControllerKey {
             let event_controller_keyboard = gtk::EventControllerKey::new();
             event_controller_keyboard.connect_key_pressed(clone!(
                 #[weak(rename_to = this)]
@@ -282,7 +292,7 @@ mod imp {
             event_controller_keyboard
         }
 
-        pub fn set_range(&self, range: Option<(Duration, Duration)>) {
+        pub fn set_range(&self, range: Option<TimeRange>) {
             self.range.set(range);
             self.refresh();
         }
@@ -355,7 +365,7 @@ mod imp {
                 self.set_position(time);
                 obj.queue_allocate();
 
-                let Some((start, end)) = self.range.get() else {
+                let Some(TimeRange { start, end }) = self.range.get() else {
                     return;
                 };
 
@@ -380,7 +390,7 @@ mod imp {
                     DragType::Playback => return,
                 };
 
-                self.range.set(Some((start, end)));
+                self.range.set(Some(TimeRange { start, end }));
                 self.refresh();
             }
         }
@@ -388,7 +398,7 @@ mod imp {
         /// Moves one handle of the selection by [`TIMELINE_KEYBOARD_MOVE`], clamped so it can't cross
         /// the other handle or leave the clip, then seeks playback to the moved handle.
         fn nudge(&self, handle: Handle, direction: Nudge) {
-            let (start, end) = self.range.get().unwrap();
+            let TimeRange { start, end } = self.range.get().unwrap();
 
             let (range, anchor) = match handle {
                 Handle::Start => {
@@ -396,14 +406,14 @@ mod imp {
                         Nudge::Forward => (start + TIMELINE_KEYBOARD_MOVE).min(end),
                         Nudge::Back => start.saturating_sub(TIMELINE_KEYBOARD_MOVE),
                     };
-                    ((start, end), start)
+                    (TimeRange { start, end }, start)
                 }
                 Handle::End => {
                     let end = match direction {
                         Nudge::Forward => (end + TIMELINE_KEYBOARD_MOVE).min(self.duration.get()),
                         Nudge::Back => end.saturating_sub(TIMELINE_KEYBOARD_MOVE).max(start),
                     };
-                    ((start, end), end)
+                    (TimeRange { start, end }, end)
                 }
             };
 
@@ -414,13 +424,13 @@ mod imp {
         /// Seeks playback to `anchor` and emits the current range and position.
         fn commit(&self, anchor: Duration) {
             self.set_position(anchor);
-            let (start, end) = self.range.get().unwrap();
+            let TimeRange { start, end } = self.range.get().unwrap();
             self.emit_set_range(start, end);
             self.emit_set_position(self.position.get());
         }
 
         fn on_drag_end(&self) {
-            let (start, end) = self.range.get().unwrap();
+            let TimeRange { start, end } = self.range.get().unwrap();
             self.emit_set_range(start, end);
             self.emit_set_position(self.position.get());
         }
@@ -445,7 +455,7 @@ mod imp {
         }
 
         pub fn set_position(&self, position: Duration) {
-            let (start, end) = self.range.get().unwrap();
+            let TimeRange { start, end } = self.range.get().unwrap();
             let position = position.clamp(start, end);
             self.position.set(position);
             self.refresh();
@@ -485,7 +495,7 @@ glib::wrapper! {
 }
 
 impl Timeline {
-    pub fn set_range(&self, range: Option<(Duration, Duration)>) {
+    pub fn set_range(&self, range: Option<TimeRange>) {
         self.imp().set_range(range);
     }
 
