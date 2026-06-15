@@ -9,7 +9,7 @@ use std::{
 use fraction::ToPrimitive;
 use ges::prelude::*;
 use gst::{ClockTime, PadProbeData, PadProbeType};
-use gstreamer_pbutils::Discoverer;
+use gstreamer_pbutils::{Discoverer, DiscovererInfo};
 use log::{error, info};
 use ordered_float::NotNan;
 
@@ -17,6 +17,7 @@ use crate::{
     info::{Dimensions, Framerate},
     orientation::VideoOrientation,
     profiles::{ContainerFormat, ContainerSelection, OutputFormat},
+    widgets::crop::Selection,
 };
 
 /// Render progress reported back to the UI, in milliseconds. A message where `position == total`
@@ -32,10 +33,7 @@ pub struct InputSettings {
     pub framerate: Framerate,
     pub scaled_dimension: Dimensions<u32>,
     pub orientation: VideoOrientation,
-    pub full_scaled_width: NotNan<f64>,
-    pub full_scaled_height: NotNan<f64>,
-    pub crop_left: NotNan<f64>,
-    pub crop_top: NotNan<f64>,
+    pub crop: Selection,
     pub inpoint: ClockTime,
     pub duration: ClockTime,
 }
@@ -80,20 +78,43 @@ pub fn run_render(
         output_path.clone()
     };
 
-    let timeline = build_timeline(&input_settings);
+    // Discovering the source is only needed when we keep its container/codecs:
+    // both to mirror them in the encoding profile and to decide whether the
+    // render is a pure passthrough. Other containers always re-encode.
+    let discoverer_info = match output_format.container_selection {
+        ContainerSelection::Same => Some(discover_source(&input_settings.uri)),
+        ContainerSelection::Format(_) => None,
+    };
+
+    let passthrough = discoverer_info
+        .as_ref()
+        .is_some_and(|info| is_passthrough_eligible(&input_settings, info));
+
+    if passthrough {
+        info!(
+            "Source is unchanged apart from trimming; enabling smart rendering to copy streams without re-encoding"
+        );
+    }
+
+    let timeline = build_timeline(&input_settings, passthrough);
 
     let pipeline = ges::Pipeline::new();
     pipeline.set_timeline(&timeline).unwrap();
 
     set_render_settings_for_pipeline(
         &output_format,
-        &input_settings.uri,
+        discoverer_info.as_ref(),
         &render_path,
         mute,
         &pipeline,
     );
 
-    pipeline.set_mode(ges::PipelineFlags::RENDER).unwrap();
+    let mode = if passthrough {
+        ges::PipelineFlags::SMART_RENDER
+    } else {
+        ges::PipelineFlags::RENDER
+    };
+    pipeline.set_mode(mode).unwrap();
 
     setup_progress_event(
         &timeline,
@@ -117,26 +138,49 @@ pub fn run_render(
     cleanup_render_job(same_file, success, &render_path, &output_path);
 }
 
-fn build_timeline(
-    InputSettings {
-        uri,
-        framerate,
-        scaled_dimension,
-        orientation,
-        full_scaled_width,
-        full_scaled_height,
-        crop_left,
-        crop_top,
-        inpoint,
-        duration,
-    }: &InputSettings,
-) -> ges::Timeline {
-    let clip = ges::UriClip::new(uri.as_str()).unwrap();
+fn build_timeline(input: &InputSettings, passthrough: bool) -> ges::Timeline {
+    let clip = ges::UriClip::new(input.uri.as_str()).unwrap();
 
     let timeline = ges::Timeline::new_audio_video();
 
     let layer = timeline.append_layer();
     layer.add_clip(&clip).unwrap();
+
+    // Scaling, cropping, orientation and framerate changes all require touching
+    // raw frames, which defeats smart rendering. When the render is a pure
+    // passthrough we skip them so GES can copy the encoded streams as-is.
+    if passthrough {
+        // Smart rendering can't run on tracks where mixing/compositing is
+        // enabled (it forces decoding), so turn it off on every track.
+        for track in timeline.tracks() {
+            track.set_mixing(false);
+        }
+    } else {
+        apply_transforms(&timeline, &clip, input);
+    }
+
+    clip.set_inpoint(input.inpoint);
+    clip.set_duration(Some(input.duration));
+
+    timeline
+}
+
+fn apply_transforms(timeline: &ges::Timeline, clip: &ges::UriClip, input: &InputSettings) {
+    let InputSettings {
+        framerate,
+        scaled_dimension,
+        orientation,
+        crop,
+        ..
+    } = input;
+
+    // The clip is scaled up so that, once `crop` trims its edges away, the
+    // visible region lands exactly on `scaled_dimension`. The positioner then
+    // shifts the cropped-away top/left back off-canvas.
+    let full_scaled_width =
+        NotNan::from(scaled_dimension.width) / (NotNan::from(1) - crop.left - crop.right);
+    let full_scaled_height =
+        NotNan::from(scaled_dimension.height) / (NotNan::from(1) - crop.top - crop.bottom);
 
     if let Some(track) = timeline.tracks().first() {
         track.set_restriction_caps(
@@ -166,31 +210,67 @@ fn build_timeline(
                 .unwrap();
             };
 
-            set_dimension("width", *full_scaled_width);
-            set_dimension("height", *full_scaled_height);
-            set_dimension("posx", -crop_left * full_scaled_width);
-            set_dimension("posy", -crop_top * full_scaled_height);
+            set_dimension("width", full_scaled_width);
+            set_dimension("height", full_scaled_height);
+            set_dimension("posx", -crop.left * full_scaled_width);
+            set_dimension("posy", -crop.top * full_scaled_height);
         });
     }
 
     clip.add_top_effect(&ges::Effect::new("videorate").unwrap(), 0)
         .ok();
+}
 
-    clip.set_inpoint(*inpoint);
-    clip.set_duration(Some(*duration));
+/// Returns `true` when the requested output is byte-for-byte the same shape as
+/// the source (same container/codecs, no crop, no orientation change, no
+/// scaling and no framerate change), so the streams can be copied rather than
+/// re-encoded.
+fn is_passthrough_eligible(input: &InputSettings, info: &DiscovererInfo) -> bool {
+    if input.orientation != VideoOrientation::Identity {
+        return false;
+    }
 
-    timeline
+    if input.crop.is_cropping() {
+        return false;
+    }
+
+    let Some(source) = crate::info::media_info(info) else {
+        return false;
+    };
+
+    if input.scaled_dimension != source.dimensions {
+        return false;
+    }
+
+    let Some(source_framerate) = source.framerate else {
+        return false;
+    };
+
+    // Compare framerates as fractions without rounding (a/b == c/d <=> ad == cb).
+    i64::from(source_framerate.nominator) * i64::from(input.framerate.denominator)
+        == i64::from(input.framerate.nominator) * i64::from(source_framerate.denominator)
+}
+
+fn discover_source(uri: &url::Url) -> DiscovererInfo {
+    Discoverer::new(gst::ClockTime::from_seconds(10))
+        .unwrap()
+        .discover_uri(uri.as_str())
+        .unwrap()
 }
 
 fn set_render_settings_for_pipeline(
     output_format: &OutputFormat,
-    input_uri: &url::Url,
+    discoverer_info: Option<&DiscovererInfo>,
     render_path: &Path,
     mute: bool,
     pipeline: &ges::Pipeline,
 ) {
     let profile: gstreamer_pbutils::EncodingProfile = match output_format.container_selection {
-        ContainerSelection::Same => same_container_profile(input_uri, mute).upcast(),
+        ContainerSelection::Same => same_container_profile(
+            discoverer_info.expect("Same container selection requires source discovery"),
+            mute,
+        )
+        .upcast(),
         ContainerSelection::Format(ContainerFormat::GifContainer) => output_format
             .video_encoding
             .unwrap()
@@ -211,16 +291,10 @@ fn set_render_settings_for_pipeline(
 
 /// Builds a container profile that mirrors the source's codecs, used when the output container is "Same".
 fn same_container_profile(
-    input_uri: &url::Url,
+    info: &DiscovererInfo,
     mute: bool,
 ) -> gstreamer_pbutils::EncodingContainerProfile {
-    let profile = gstreamer_pbutils::EncodingProfile::from_discoverer(
-        &Discoverer::new(gst::ClockTime::SECOND)
-            .unwrap()
-            .discover_uri(input_uri.as_str())
-            .unwrap(),
-    )
-    .unwrap();
+    let profile = gstreamer_pbutils::EncodingProfile::from_discoverer(info).unwrap();
 
     let (video_caps, audio_caps): (Vec<_>, Vec<_>) = profile
         .input_caps()

@@ -28,7 +28,12 @@ pub struct EdgeInsets<T> {
 }
 
 impl Selection {
-    /// Convert the normalized 0–1 insets into pixel insets (top, right, bottom, left) for a region of the given size.
+    /// Whether any edge is trimmed, as opposed to keeping the full frame.
+    pub fn is_cropping(&self) -> bool {
+        *self.top != 0.0 || *self.right != 0.0 || *self.bottom != 0.0 || *self.left != 0.0
+    }
+
+    /// Convert the normalized 0-1 insets into pixel insets (top, right, bottom, left) for a region of the given size.
     pub fn for_dimensions(
         &self,
         width: NotNan<f64>,
@@ -763,7 +768,7 @@ glib::wrapper! {
 }
 
 impl Crop {
-    /// Current crop as normalized 0–1 insets from each edge of the source frame.
+    /// Current crop as normalized 0-1 insets from each edge of the source frame.
     pub fn proportions(&self) -> Selection {
         self.imp().current_selection.get()
     }

@@ -1,4 +1,3 @@
-use ordered_float::NotNan;
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -19,7 +18,7 @@ use crate::{
     orientation::{VideoOrientation, VideoOrientationTransformation},
     profiles::OutputFormat,
     render::{InputSettings, Progress, RenderJob, run_render},
-    widgets::{crop::Selection, timeline::TimeRange},
+    widgets::timeline::TimeRange,
 };
 
 /// State that only exists while a video is loaded and being previewed.
@@ -459,12 +458,11 @@ impl VideoPreview {
         scaled_dimension: Dimensions<u32>,
         running_flag: Arc<AtomicBool>,
     ) {
-        let Some((input_uri, orientation, original_dimensions, mute, inpoint, outpoint)) = self
-            .with_loaded(|loaded| {
+        let Some((input_uri, orientation, mute, inpoint, outpoint)) =
+            self.with_loaded(|loaded| {
                 (
                     loaded.uri.clone(),
                     loaded.orientation,
-                    loaded.original_dimensions,
                     loaded.mute,
                     loaded.inpoint,
                     loaded.outpoint,
@@ -474,12 +472,7 @@ impl VideoPreview {
             error!("save called with no video loaded");
             return;
         };
-        let Selection {
-            top,
-            right,
-            bottom,
-            left,
-        } = self.imp().crop_box.proportions();
+        let crop = self.imp().crop_box.proportions();
 
         self.set_playing(false);
 
@@ -487,19 +480,6 @@ impl VideoPreview {
             "Converting with output path: {output_path:?}, output format: {output_format:?}, framerate: {framerate:?}, scaled dimension: {scaled_dimension:?}",
             output_path = output_path.display(),
         );
-
-        let dimensions = if orientation.is_width_height_swapped() {
-            original_dimensions.swap()
-        } else {
-            original_dimensions
-        };
-
-        let full_scaled_width = NotNan::from(dimensions.width)
-            * (NotNan::from(scaled_dimension.width)
-                / (NotNan::from(dimensions.width) * (NotNan::from(1) - right - left)));
-        let full_scaled_height = NotNan::from(dimensions.height)
-            * (NotNan::from(scaled_dimension.height)
-                / (NotNan::from(dimensions.height) * (NotNan::from(1) - top - bottom)));
 
         let duration = outpoint
             .checked_sub(inpoint)
@@ -511,10 +491,7 @@ impl VideoPreview {
                 framerate,
                 scaled_dimension,
                 orientation,
-                full_scaled_width,
-                full_scaled_height,
-                crop_left: left,
-                crop_top: top,
+                crop,
                 inpoint: duration_to_clocktime(inpoint),
                 duration: duration_to_clocktime(duration),
             },
