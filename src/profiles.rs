@@ -97,6 +97,24 @@ impl ContainerFormat {
             GifContainer => "GIF".to_owned(),
         }
     }
+
+    /// Stable identifier used to persist the selection. Unlike list indices,
+    /// this survives codec availability and display-ordering changes.
+    pub const fn settings_key(self) -> &'static str {
+        match self {
+            Best => "best",
+            Matroska => "matroska",
+            Mpeg => "mpeg",
+            WebM => "webm",
+            GifContainer => "gif",
+        }
+    }
+
+    pub fn from_settings_key(key: &str) -> Option<Self> {
+        [Best, Matroska, Mpeg, WebM, GifContainer]
+            .into_iter()
+            .find(|c| c.settings_key() == key)
+    }
 }
 
 impl ContainerSelection {
@@ -123,6 +141,22 @@ impl ContainerSelection {
         match self {
             Self::Same => gettext("Keep as-is"),
             Self::Format(f) => f.for_display(),
+        }
+    }
+
+    /// Stable identifier used to persist the selection across sessions.
+    pub const fn settings_key(self) -> &'static str {
+        match self {
+            Self::Same => "same",
+            Self::Format(f) => f.settings_key(),
+        }
+    }
+
+    pub fn from_settings_key(key: &str) -> Option<Self> {
+        if key == "same" {
+            Some(Self::Same)
+        } else {
+            ContainerFormat::from_settings_key(key).map(Self::Format)
         }
     }
 }
@@ -186,9 +220,26 @@ impl VideoEncoding {
             Gif => "GIF",
         }
     }
+
+    pub const fn settings_key(self) -> &'static str {
+        match self {
+            Av1 => "av1",
+            Vp8 => "vp8",
+            Vp9 => "vp9",
+            H264 => "h264",
+            H265 => "h265",
+            Gif => "gif",
+        }
+    }
+
+    pub fn from_settings_key(key: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|e| e.settings_key() == key)
+    }
 }
 
 impl AudioEncoding {
+    pub const ALL: &[Self] = &[Aac, Ac3, Opus, Vorbis, Flac];
+
     pub const fn format(&self) -> &str {
         match self {
             Aac => "audio/mpeg",
@@ -218,6 +269,20 @@ impl AudioEncoding {
             Vorbis => "Vorbis",
             Flac => "FLAC",
         }
+    }
+
+    pub const fn settings_key(self) -> &'static str {
+        match self {
+            Aac => "aac",
+            Ac3 => "ac3",
+            Opus => "opus",
+            Vorbis => "vorbis",
+            Flac => "flac",
+        }
+    }
+
+    pub fn from_settings_key(key: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|e| e.settings_key() == key)
     }
 }
 

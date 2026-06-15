@@ -13,5 +13,17 @@
 			<default>false</default>
 			<summary>Window maximized state</summary>
 		</key>
+		<key name="container-selection" type="s">
+			<default>'best'</default>
+			<summary>Last selected export container format</summary>
+		</key>
+		<key name="video-encoding-per-container" type="a{ss}">
+			<default>[]</default>
+			<summary>Last selected video encoding per container format</summary>
+		</key>
+		<key name="audio-encoding-per-container" type="a{ss}">
+			<default>[]</default>
+			<summary>Last selected audio encoding per container format</summary>
+		</key>
 	</schema>
 </schemalist>

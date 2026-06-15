@@ -296,6 +296,7 @@ template $AppWindow: Adw.ApplicationWindow {
                   Adw.ComboRow audio_encoding {
                     title: _("Audio Encoding");
                     use-subtitle: true;
+                    notify::selected => $on_audio_encoding_changed() swapped;
 
                     model: StringList {};
 

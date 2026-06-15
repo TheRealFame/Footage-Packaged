@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     num::ParseIntError,
     os::fd::AsFd,
     path::{Path, PathBuf},
@@ -11,7 +12,7 @@ use gettextrs::gettext;
 use glib::clone;
 use gtk::{gio, glib, subclass::prelude::*};
 use itertools::Itertools;
-use log::{error, warn};
+use log::{error, info, warn};
 
 use crate::{
     Listable,
@@ -112,6 +113,8 @@ mod imp {
         pub provider: gtk::CssProvider,
         #[derivative(Default(value = "gio::Settings::new(APP_ID)"))]
         pub settings: gio::Settings,
+        /// Suppresses persistence while options are being restored programmatically.
+        pub loading: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -189,13 +192,7 @@ impl AppWindow {
 
         win.setup_crop_box_listener();
 
-        win.imp().container_row.set_model(Some(
-            &ContainerSelection::all()
-                .into_iter()
-                .map(super::profiles::ContainerSelection::for_display)
-                .collect_vec()
-                .to_list(),
-        ));
+        win.load_export_options();
 
         win
     }
@@ -379,11 +376,24 @@ impl AppWindow {
     #[template_callback]
     fn on_container_changed(&self) {
         self.update_options();
+        if !self.imp().loading.get() {
+            self.save_selected_container();
+        }
     }
 
     #[template_callback]
     fn on_video_encoding_changed(&self) {
         self.update_framerate_limit();
+        if !self.imp().loading.get() {
+            self.save_selected_encoding();
+        }
+    }
+
+    #[template_callback]
+    fn on_audio_encoding_changed(&self) {
+        if !self.imp().loading.get() {
+            self.save_selected_encoding();
+        }
     }
 
     #[template_callback]
@@ -682,6 +692,11 @@ impl AppWindow {
     fn update_options(&self) {
         let imp = self.imp();
 
+        // Rebuilding the models resets the encoding rows to index 0, which would
+        // emit notify::selected and clobber the saved per-container codec. Guard
+        // the whole rebuild + restore so only genuine user changes are persisted.
+        let was_loading = imp.loading.replace(true);
+
         let (available_video, available_audio) = match self.selected_container() {
             ContainerSelection::Same => (vec![], vec![]),
             ContainerSelection::Format(f) => {
@@ -707,7 +722,46 @@ impl AppWindow {
                 .to_list(),
         ));
 
+        self.restore_per_container_encodings();
         self.update_framerate_limit();
+
+        imp.loading.set(was_loading);
+
+        // Persist the resulting codec choice for this container, unless we're
+        // still restoring state at startup.
+        if !was_loading {
+            self.save_selected_encoding();
+        }
+    }
+
+    /// Re-selects the video/audio encoding last used for the active container.
+    fn restore_per_container_encodings(&self) {
+        let ContainerSelection::Format(f) = self.selected_container() else {
+            return;
+        };
+        let imp = self.imp();
+
+        let video_map = imp
+            .settings
+            .get::<HashMap<String, String>>("video-encoding-per-container");
+        if let Some(idx) = video_map.get(f.settings_key()).and_then(|key| {
+            f.viable_video_encodings()
+                .iter()
+                .position(|e| e.settings_key() == key)
+        }) {
+            imp.video_encoding.set_selected(idx as u32);
+        }
+
+        let audio_map = imp
+            .settings
+            .get::<HashMap<String, String>>("audio-encoding-per-container");
+        if let Some(idx) = audio_map.get(f.settings_key()).and_then(|key| {
+            f.viable_audio_encodings()
+                .iter()
+                .position(|e| e.settings_key() == key)
+        }) {
+            imp.audio_encoding.set_selected(idx as u32);
+        }
     }
 
     fn update_framerate_limit(&self) {
@@ -926,9 +980,81 @@ impl AppWindow {
 trait SettingsStore {
     fn save_window_size(&self) -> Result<(), glib::BoolError>;
     fn load_window_size(&self);
+    fn load_export_options(&self);
+    fn save_selected_container(&self);
+    fn save_selected_encoding(&self);
 }
 
 impl SettingsStore for AppWindow {
+    fn load_export_options(&self) {
+        let imp = self.imp();
+        imp.loading.set(true);
+
+        // Build the container model here (rather than in `new`) so the
+        // notify::selected it emits stays inside the loading guard and doesn't
+        // clobber the persisted value before we've read it.
+        imp.container_row.set_model(Some(
+            &ContainerSelection::all()
+                .into_iter()
+                .map(super::profiles::ContainerSelection::for_display)
+                .collect_vec()
+                .to_list(),
+        ));
+
+        let saved = imp.settings.string("container-selection");
+        info!("Restoring export options: container-selection = {saved}");
+        if let Some(idx) = ContainerSelection::from_settings_key(&saved)
+            .and_then(|target| ContainerSelection::all().iter().position(|c| *c == target))
+        {
+            imp.container_row.set_selected(idx as u32);
+        }
+
+        // Populate the codec models and restore per-container codecs for the
+        // active container; still guarded, so nothing is written back.
+        self.update_options();
+
+        imp.loading.set(false);
+    }
+
+    fn save_selected_container(&self) {
+        let key = self.selected_container().settings_key();
+        info!("Saving container-selection = {key}");
+        let _ = self.imp().settings.set_string("container-selection", key);
+    }
+
+    fn save_selected_encoding(&self) {
+        let ContainerSelection::Format(f) = self.selected_container() else {
+            return;
+        };
+        let imp = self.imp();
+
+        if let Some(enc) = self.selected_video_encoding() {
+            info!(
+                "Saving video encoding for container '{}' = {}",
+                f.settings_key(),
+                enc.settings_key()
+            );
+            let mut map = imp
+                .settings
+                .get::<HashMap<String, String>>("video-encoding-per-container");
+            map.insert(f.settings_key().to_owned(), enc.settings_key().to_owned());
+            let _ = imp.settings.set("video-encoding-per-container", map);
+        }
+
+        if let Some(enc) = self.selected_audio_encoding() {
+            info!(
+                "Saving audio encoding for container '{}' = {}",
+                f.settings_key(),
+                enc.settings_key()
+            );
+            let mut map = imp
+                .settings
+                .get::<HashMap<String, String>>("audio-encoding-per-container");
+            map.insert(f.settings_key().to_owned(), enc.settings_key().to_owned());
+            let _ = imp.settings.set("audio-encoding-per-container", map);
+        }
+    }
+
     fn save_window_size(&self) -> Result<(), glib::BoolError> {
         let imp = self.imp();
 
