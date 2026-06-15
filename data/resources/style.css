@@ -3,6 +3,15 @@ timeline {
   border-radius: 6px;
 }
 
+dragoverlay {
+  box-shadow: none;
+}
+
+.drag-overlay-status-page {
+  background-color: alpha(var(--accent-bg-color), 0.5);
+  color: var(--accent-fg-color);
+}
+
 .timeline-selection {
   background-color: color-mix(in srgb, var(--accent-bg-color) 70%, white);
   border-radius: 6px;

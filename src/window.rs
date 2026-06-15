@@ -33,7 +33,7 @@ mod imp {
 
     use crate::{
         config::{APP_ID, PKGDATADIR},
-        widgets::{preview::VideoPreview, timeline::Timeline},
+        widgets::{drag_overlay::DragOverlay, preview::VideoPreview, timeline::Timeline},
     };
 
     use super::*;
@@ -104,6 +104,8 @@ mod imp {
         pub play_pause: TemplateChild<gtk::Button>,
         #[template_child]
         pub help_overlay: TemplateChild<adw::ShortcutsDialog>,
+        #[template_child]
+        pub drag_overlay: TemplateChild<DragOverlay>,
 
         pub running_flag: Arc<AtomicBool>,
         pub video_dimensions: Cell<Option<Dimensions<u32>>>,
@@ -191,10 +193,40 @@ impl AppWindow {
             .build();
 
         win.setup_crop_box_listener();
+        win.setup_drop_target();
 
         win.load_export_options();
 
         win
+    }
+
+    fn setup_drop_target(&self) {
+        let drop_target = gtk::DropTarget::builder()
+            .name("file-drop-target")
+            .actions(gtk::gdk::DragAction::COPY)
+            .formats(&gtk::gdk::ContentFormats::for_type(
+                gtk::gdk::FileList::static_type(),
+            ))
+            .build();
+
+        drop_target.connect_drop(clone!(
+            #[weak(rename_to=window)]
+            self,
+            #[upgrade_or_default]
+            move |_, value, _, _| {
+                if let Ok(file_list) = value.get::<gtk::gdk::FileList>()
+                    && let Some(file) = file_list.files().first()
+                    && let Some(path) = file.path()
+                {
+                    window.open_file(&path);
+                    return true;
+                }
+
+                false
+            }
+        ));
+
+        self.imp().drag_overlay.set_drop_target(&drop_target);
     }
 
     fn setup_gactions(&self) {
