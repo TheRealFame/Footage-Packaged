@@ -458,17 +458,15 @@ impl VideoPreview {
         scaled_dimension: Dimensions<u32>,
         running_flag: Arc<AtomicBool>,
     ) {
-        let Some((input_uri, orientation, mute, inpoint, outpoint)) =
-            self.with_loaded(|loaded| {
-                (
-                    loaded.uri.clone(),
-                    loaded.orientation,
-                    loaded.mute,
-                    loaded.inpoint,
-                    loaded.outpoint,
-                )
-            })
-        else {
+        let Some((input_uri, orientation, mute, inpoint, outpoint)) = self.with_loaded(|loaded| {
+            (
+                loaded.uri.clone(),
+                loaded.orientation,
+                loaded.mute,
+                loaded.inpoint,
+                loaded.outpoint,
+            )
+        }) else {
             error!("save called with no video loaded");
             return;
         };
