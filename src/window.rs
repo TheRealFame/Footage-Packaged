@@ -446,6 +446,9 @@ impl AppWindow {
             }
             _ => unreachable!(),
         }
+        if !imp.loading.get() {
+            self.save_resize_unit();
+        }
     }
 
     #[template_callback]
@@ -1015,6 +1018,7 @@ trait SettingsStore {
     fn load_export_options(&self);
     fn save_selected_container(&self);
     fn save_selected_encoding(&self);
+    fn save_resize_unit(&self);
 }
 
 impl SettingsStore for AppWindow {
@@ -1039,6 +1043,12 @@ impl SettingsStore for AppWindow {
             .and_then(|target| ContainerSelection::all().iter().position(|c| *c == target))
         {
             imp.container_row.set_selected(idx as u32);
+        }
+
+        let resize_unit = imp.settings.string("resize-unit");
+        info!("Restoring export options: resize-unit = {resize_unit}");
+        if resize_unit == "pixel" {
+            imp.resize_type.set_selected(1);
         }
 
         // Populate the codec models and restore per-container codecs for the
@@ -1085,6 +1095,15 @@ impl SettingsStore for AppWindow {
             map.insert(f.settings_key().to_owned(), enc.settings_key().to_owned());
             let _ = imp.settings.set("audio-encoding-per-container", map);
         }
+    }
+
+    fn save_resize_unit(&self) {
+        let unit = match self.imp().resize_type.selected() {
+            1 => "pixel",
+            _ => "percentage",
+        };
+        info!("Saving resize-unit = {unit}");
+        let _ = self.imp().settings.set_string("resize-unit", unit);
     }
 
     fn save_window_size(&self) -> Result<(), glib::BoolError> {

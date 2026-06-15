@@ -25,5 +25,9 @@
 			<default>[]</default>
 			<summary>Last selected audio encoding per container format</summary>
 		</key>
+		<key name="resize-unit" type="s">
+			<default>'percentage'</default>
+			<summary>Last selected resize unit (percentage or pixels)</summary>
+		</key>
 	</schema>
 </schemalist>
