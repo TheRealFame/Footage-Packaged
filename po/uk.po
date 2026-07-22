@@ -1,0 +1,344 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the footage package.
+# FIRST AUTHOR <Dymkovych@proton.me>, 2026.
+# Dymko <Dymkovych@proton.me>, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: footage\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-06-14 18:35-0700\n"
+"PO-Revision-Date: 2026-07-13 20:51+0300\n"
+"Last-Translator: Dymko <Dymkovych@proton.me>\n"
+"Language-Team: Ukrainian\n"
+"Language: uk\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n != 0 ? 1 : "
+"2);\n"
+"X-Generator: Gtranslator 50.0\n"
+
+#: data/io.gitlab.adhami3310.Footage.desktop.in.in:2
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:5
+#: data/resources/blueprints/window.blp:9
+#: data/resources/blueprints/window.blp:49 src/main.rs:57
+msgid "Footage"
+msgstr "Футаж"
+
+#: data/io.gitlab.adhami3310.Footage.desktop.in.in:3
+msgid "Video Editor"
+msgstr "Відеоредактор"
+
+#: data/io.gitlab.adhami3310.Footage.desktop.in.in:4
+msgid "Polish Your Videos"
+msgstr "Довершуйте відео"
+
+#: data/io.gitlab.adhami3310.Footage.desktop.in.in:10
+msgid "video;edit;trim;crop;convert;"
+msgstr "відео;редактор;обрізати;кадрувати;конвертувати;video;edit;trim;crop;convert;"
+
+#: data/io.gitlab.adhami3310.Footage.gschema.xml.in:6
+msgid "Window width"
+msgstr "Ширина вікна"
+
+#: data/io.gitlab.adhami3310.Footage.gschema.xml.in:10
+msgid "Window height"
+msgstr "Висота вікна"
+
+#: data/io.gitlab.adhami3310.Footage.gschema.xml.in:14
+msgid "Window maximized state"
+msgstr "Стан розгорнутого вікна"
+
+#: data/io.gitlab.adhami3310.Footage.gschema.xml.in:18
+msgid "Last selected export container format"
+msgstr "Останній вибраний формат контейнера для експорту"
+
+#: data/io.gitlab.adhami3310.Footage.gschema.xml.in:22
+msgid "Last selected video encoding per container format"
+msgstr "Останнє вибране кодування відео для формату контейнера"
+
+#: data/io.gitlab.adhami3310.Footage.gschema.xml.in:26
+msgid "Last selected audio encoding per container format"
+msgstr "Останнє вибране кодування аудіо для формату контейнера"
+
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:10
+msgid "Polish your videos"
+msgstr "Вдосконалюйте свої відео"
+
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:16
+msgid ""
+"Trim, flip, rotate and crop individual clips. Footage is a useful tool for "
+"quickly editing short videos and screencasts. It's also capable of exporting "
+"any video into a format of your choice."
+msgstr ""
+"Обрізайте, віддзеркалюйте, обертайте та кадруйте окремі кліпи. Футаж — це "
+"зручний інструмент для швидкого редагування коротких відео і записів екрана. "
+"Він також здатен експортувати будь-яке відео в обраний вами формат."
+
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:33
+msgid "video"
+msgstr "відео"
+
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:34
+msgid "edit"
+msgstr "редагування"
+
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:35
+msgid "trim"
+msgstr "кадрування"
+
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:36
+msgid "crop"
+msgstr "кадрування"
+
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:37
+msgid "convert"
+msgstr "конвертування"
+
+#: data/io.gitlab.adhami3310.Footage.metainfo.xml.in.in:53
+msgid "Editing screen with default options"
+msgstr "Екран редагування з типовими параметрами"
+
+#: data/resources/blueprints/crop.blp:61
+msgid "Top left crop corner"
+msgstr "Верхній лівий кут кадрування"
+
+#: data/resources/blueprints/crop.blp:75
+msgid "Top right crop corner"
+msgstr "Верхній правий кут кадрування"
+
+#: data/resources/blueprints/crop.blp:91
+msgid "Bottom left crop corner"
+msgstr "Нижній лівий кут кадрування"
+
+#: data/resources/blueprints/crop.blp:105
+msgid "Bottom right crop corner"
+msgstr "Нижній правий кут кадрування"
+
+#: data/resources/blueprints/window.blp:12
+msgid "Drop Here to Open"
+msgstr "Перетягніть сюди, щоб відкрити"
+
+#: data/resources/blueprints/window.blp:19
+msgid "Edit Same Video"
+msgstr "Редагувати це ж відео"
+
+#: data/resources/blueprints/window.blp:32
+msgid "Main Menu"
+msgstr "Головне меню"
+
+#: data/resources/blueprints/window.blp:50
+msgid "Choose a video to edit"
+msgstr "Виберіть відео для редагування"
+
+#: data/resources/blueprints/window.blp:61
+#: data/resources/blueprints/window.blp:479
+msgid "Open Video…"
+msgstr "Відкрити відео…"
+
+#: data/resources/blueprints/window.blp:79
+msgid "Could not Load Video"
+msgstr "Не вдалося завантажити відео"
+
+#: data/resources/blueprints/window.blp:80
+msgid "This video could be corrupted or may use an unsupported file format."
+msgstr "Можливо, це відео пошкоджене або має непідтримуваний формат файлу."
+
+#: data/resources/blueprints/window.blp:140
+msgid "Rotate Left"
+msgstr "Повернути ліворуч"
+
+#: data/resources/blueprints/window.blp:147
+msgid "Rotate Right"
+msgstr "Повернути праворуч"
+
+#: data/resources/blueprints/window.blp:154
+msgid "Flip Horizontally"
+msgstr "Віддзеркалити горизонтально"
+
+#: data/resources/blueprints/window.blp:161
+msgid "Flip Vertically"
+msgstr "Віддзеркалити вертикально"
+
+#: data/resources/blueprints/window.blp:168 src/window.rs:353
+msgid "Disable Audio"
+msgstr "Вимкнути звук"
+
+#: data/resources/blueprints/window.blp:176
+msgid "Resize"
+msgstr "Розмір"
+
+#: data/resources/blueprints/window.blp:183
+#: data/resources/blueprints/window.blp:184
+#: data/resources/blueprints/window.blp:194
+#: data/resources/blueprints/window.blp:196
+msgid "Width"
+msgstr "Ширина"
+
+#: data/resources/blueprints/window.blp:205
+msgid "Preserve aspect ratio"
+msgstr "Зберегти пропорції"
+
+#: data/resources/blueprints/window.blp:214
+#: data/resources/blueprints/window.blp:215
+#: data/resources/blueprints/window.blp:225
+#: data/resources/blueprints/window.blp:226
+msgid "Height"
+msgstr "Висота"
+
+#: data/resources/blueprints/window.blp:241
+msgid "Choose between resizing with percentages or using exact pixels"
+msgstr "Виберіть між зміною розміру у відсотках або точних пікселях"
+
+#: data/resources/blueprints/window.blp:246
+msgid "%"
+msgstr "%"
+
+#: data/resources/blueprints/window.blp:247
+msgid "px"
+msgstr "пікс"
+
+#: data/resources/blueprints/window.blp:261
+msgid "Framerate"
+msgstr "Частота кадрів"
+
+#: data/resources/blueprints/window.blp:276
+msgid "Container Format"
+msgstr "Формат контейнера"
+
+#: data/resources/blueprints/window.blp:288
+msgid "Video Encoding"
+msgstr "Кодування відео"
+
+#: data/resources/blueprints/window.blp:300
+msgid "Audio Encoding"
+msgstr "Кодування аудіо"
+
+#: data/resources/blueprints/window.blp:317
+msgid "Save Video"
+msgstr "Зберегти відео"
+
+#: data/resources/blueprints/window.blp:349
+msgid "Video Exported"
+msgstr "Відео експортовано"
+
+#: data/resources/blueprints/window.blp:359
+msgid "View Result"
+msgstr "Переглянути результат"
+
+#: data/resources/blueprints/window.blp:372
+msgid "Finish"
+msgstr "Завершити"
+
+#: data/resources/blueprints/window.blp:391
+msgid "Exporting Video Unsuccessful"
+msgstr "Помилка експорту відео"
+
+#: data/resources/blueprints/window.blp:400
+msgid "Retry"
+msgstr "Повторити"
+
+#: data/resources/blueprints/window.blp:417
+msgid "Rendering"
+msgstr "Триває обробка"
+
+#: data/resources/blueprints/window.blp:419
+msgid "This may take a while"
+msgstr "Це може зайняти деякий час"
+
+#: data/resources/blueprints/window.blp:434 src/window.rs:624
+msgid "_Cancel"
+msgstr "_Скасувати"
+
+#: data/resources/blueprints/window.blp:452
+msgctxt "shortcut window"
+msgid "General"
+msgstr "Загальні"
+
+#: data/resources/blueprints/window.blp:455
+msgctxt "shortcut window"
+msgid "Open File"
+msgstr "Відкрити файл"
+
+#: data/resources/blueprints/window.blp:460
+msgctxt "shortcut window"
+msgid "New Window"
+msgstr "Нове вікно"
+
+#: data/resources/blueprints/window.blp:465
+msgctxt "shortcut window"
+msgid "Show Shortcuts"
+msgstr "Клавіатурні скорочення"
+
+#: data/resources/blueprints/window.blp:470
+msgctxt "shortcut window"
+msgid "Quit"
+msgstr "Вийти"
+
+#: data/resources/blueprints/window.blp:484
+msgid "New Window"
+msgstr "Нове вікно"
+
+#: data/resources/blueprints/window.blp:491
+msgid "Keyboard Shortcuts"
+msgstr "Клавіатурні скорочення"
+
+#: data/resources/blueprints/window.blp:496
+msgid "About Footage"
+msgstr "Про Футаж"
+
+#: data/resources/blueprints/timeline.blp:17
+msgid "Left trimming handle"
+msgstr "Лівий маркер обрізання"
+
+#: data/resources/blueprints/timeline.blp:62
+msgid "Right trimming handle"
+msgstr "Правий маркер обрізання"
+
+#: src/window.rs:350
+msgid "Enable Audio"
+msgstr "Увімкнути звук"
+
+#: src/window.rs:517
+msgid "Pause"
+msgstr "Пауза"
+
+#: src/window.rs:522
+msgid "Play"
+msgstr "Грати"
+
+#: src/window.rs:619
+msgid "Stop rendering?"
+msgstr "Зупинити обробку?"
+
+#: src/window.rs:620
+msgid "You will lose all progress."
+msgstr "Ви втратите весь прогрес."
+
+#: src/window.rs:624
+msgid "_Stop"
+msgstr "_Зупинити"
+
+#: src/window.rs:655
+msgid "Video Files"
+msgstr "Файли відеозаписів"
+
+#: src/window.rs:844
+#, rust-format
+msgid "Saved as {}"
+msgstr "Збережено як {}"
+
+#. Translators: Replace "translator-credits" with your names, one name per line
+#: src/window.rs:1006
+msgid "translator-credits"
+msgstr "Dymko"
+
+#: src/profiles.rs:93
+msgid "Recommended (WEBM, AV1, Opus)"
+msgstr "Рекомендовано (WEBM, AV1, Opus)"
+
+#: src/profiles.rs:142
+msgid "Keep as-is"
+msgstr "Без змін"
