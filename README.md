@@ -70,3 +70,33 @@ Actively developed by Khaleel Al-Adhami.
 Logo desgined by kramo.
 
 Huge thanks to all of the translators who brought Footage to many other languages!
+
+## Installation via Linux Packages
+
+Linux packages are built automatically via GitHub Actions for each release.
+
+### Debian / Ubuntu
+
+```bash
+sudo dpkg -i footage_*_amd64.deb
+sudo apt-get install -f
+```
+
+### Fedora / RHEL / openSUSE
+
+```bash
+sudo rpm -i footage-*.rpm
+```
+
+### AppImage (universal)
+
+```bash
+chmod +x footage-x86_64.AppImage
+./footage-x86_64.AppImage
+```
+
+### Arch / Manjaro
+
+```bash
+sudo pacman -U footage-*.pkg.tar.zst
+```

@@ -1,0 +1,41 @@
+Source: footage
+Section: video
+Priority: optional
+Maintainer: Footage Packaging <packaging@adhami3310.example>
+Build-Depends: debhelper-compat (= 13),
+               meson (>= 0.59.0),
+               ninja-build,
+               libgtk-4-dev (>= 4.10.0),
+               libadwaita-1-dev,
+               blueprint-compiler,
+                libgstreamer1.0-dev,
+                libgstreamer-plugins-base1.0-dev,
+                libges-1.0-dev,
+                libglib2.0-dev,
+               desktop-file-utils,
+               appstream
+Standards-Version: 4.6.2
+Homepage: https://gitlab.adhami3310/Footage
+Vcs-Browser: https://github.com/adhami3310/Footage
+Vcs-Git: https://github.com/adhami3310/Footage.git
+Rules-Requires-Root: no
+
+Package: footage
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         gstreamer1.0-plugins-good,
+         gstreamer1.0-plugins-bad,
+         gstreamer1.0-plugins-ugly,
+         gstreamer1.0-libav,
+         libgtk-4-1,
+         libadwaita-1-0
+Description: Trim and edit short videos and screencasts
+ Footage is a simple video editing utility built for trimming, flipping,
+ rotating, cropping and re-encoding short video clips and screencasts.
+ It is built on top of GStreamer and GTK 4 / libadwaita.
+ .
+ Features include:
+  * Trim clips precisely using a timeline view
+  * Flip, rotate, crop
+  * Re-encode between common video formats
