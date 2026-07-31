@@ -6,17 +6,33 @@ on:
       - 'v*'
   pull_request:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (overrides the git tag)'
+        required: false
 
 permissions:
   contents: write
+
+env:
+  VERSION: ${{ inputs.version != '' && inputs.version || (github.ref_type == 'tag' && github.ref_name || '') }}
 
 jobs:
   deb:
     name: "Debian Package (amd64)"
     runs-on: ubuntu-24.04
-    container: ubuntu:latest
+    container: ubuntu:26.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          if [ -z "$VERSION" ]; then
+            VERSION=$(grep -m1 "version:" meson.build | grep -o '[0-9.]*')
+          fi
+          VERSION=${VERSION#v}
+          echo "Building version $VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
@@ -31,9 +47,13 @@ jobs:
           rustup install 1.92.0
           rustup default 1.92.0
 
-      - name: Clone upstream source
+      - name: Prepare source
         run: |
-          git clone --depth 1 --branch v1.4.0 https://github.com/adhami3310/Footage.git footage-src
+          export PATH="$HOME/.cargo/bin:$PATH"
+          mkdir -p footage-${VERSION}
+          git archive HEAD | tar -x -C footage-${VERSION}
+          cp -a debian footage-${VERSION}/
+          sed -i "1s/\(.*\)(\([^)]*\))\(.*\)/\1(${VERSION}-1)\3/" footage-${VERSION}/debian/changelog
 
       - name: Build Debian package
         run: |
@@ -44,8 +64,7 @@ jobs:
           ln -sf "$TOOLCHAIN/bin/rustc" /usr/bin/rustc
           ln -sf "$TOOLCHAIN/bin/cargo" /usr/bin/cargo
           ln -sf "$TOOLCHAIN/bin/rustup" /usr/bin/rustup
-          cp -a debian footage-src/
-          cd footage-src
+          cd footage-${VERSION}
           debuild -us -uc -b
 
       - name: Upload Debian artifact
@@ -54,69 +73,26 @@ jobs:
           name: footage-deb
           path: footage_*.deb
 
-      - name: Generate release notes
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          echo "# Footage $TAG" > release_notes.md
-          echo "" >> release_notes.md
-          echo "Trim and edit short videos and screencasts." >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## Installation" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### AppImage (Universal)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "chmod +x footage-x86_64.AppImage" >> release_notes.md
-          echo "./footage-x86_64.AppImage" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### Debian/Ubuntu" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo dpkg -i footage_*.deb" >> release_notes.md
-          echo "sudo apt-get install -f" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### RPM (Fedora/RHEL/openSUSE)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo rpm -i footage-*.rpm" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### Pacman (Arch/Manjaro)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo pacman -U footage-*.pkg.tar.zst" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## Required Dependencies" >> release_notes.md
-          echo "- GStreamer plugins (good, bad, ugly, libav)" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "_Generated with AI assistance_" >> release_notes.md
-
-      - name: Release Debian package
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: footage_*.deb
-          body_path: release_notes.md
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   appimage:
     name: "AppImage (amd64)"
     runs-on: ubuntu-24.04
-    container: ubuntu:latest
+    container: ubuntu:26.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          if [ -z "$VERSION" ]; then
+            VERSION=$(grep -m1 "version:" meson.build | grep -o '[0-9.]*')
+          fi
+          VERSION=${VERSION#v}
+          echo "Building version $VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y curl wget fuse libfuse2 file meson ninja-build libgtk-4-dev libadwaita-1-dev blueprint-compiler libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libges-1.0-dev pkg-config libglib2.0-dev desktop-file-utils gettext appstream git
-
-      - name: Clone upstream source
-        run: |
-          git clone --depth 1 --branch v1.4.0 https://github.com/adhami3310/Footage.git footage-src
 
       - name: Install older Rust (needed for gtk4-rs compat)
         run: |
@@ -131,17 +107,16 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           unset PKG_CONFIG_SYSROOT_DIR
           export PKG_CONFIG_ALLOW_CROSS=1
-          cd footage-src
           meson setup builddir --prefix=/usr
           ninja -C builddir
-          DESTDIR=$(pwd)/../appdir ninja -C builddir install
+          DESTDIR=$(pwd)/appdir ninja -C builddir install
 
       - name: Create AppDir structure
         run: |
           mkdir -p appdir/usr/share/applications appdir/usr/share/icons/hicolor/scalable/apps appdir/usr/share/metainfo
-          cp footage-src/builddir/data/io.gitlab.adhami3310.Footage.desktop appdir/io.gitlab.adhami3310.Footage.desktop
-          cp footage-src/data/resources/icons/hicolor/scalable/apps/io.gitlab.adhami3310.Footage.svg appdir/footage.svg
-          cp footage-src/builddir/data/io.gitlab.adhami3310.Footage.metainfo.xml appdir/usr/share/metainfo/footage.appdata.xml
+          cp builddir/data/io.gitlab.adhami3310.Footage.desktop appdir/io.gitlab.adhami3310.Footage.desktop
+          cp data/resources/icons/hicolor/scalable/apps/io.gitlab.adhami3310.Footage.svg appdir/footage.svg
+          cp builddir/data/io.gitlab.adhami3310.Footage.metainfo.xml appdir/usr/share/metainfo/footage.appdata.xml
           sed -i 's|Exec=.*|Exec=footage|' appdir/io.gitlab.adhami3310.Footage.desktop
           sed -i 's|Icon=.*|Icon=footage|' appdir/io.gitlab.adhami3310.Footage.desktop
 
@@ -176,60 +151,21 @@ jobs:
           name: footage-appimage
           path: footage-x86_64.AppImage
 
-      - name: Generate release notes
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          echo "# Footage $TAG" > release_notes.md
-          echo "" >> release_notes.md
-          echo "Trim and edit short videos and screencasts." >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## Installation" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### AppImage (Universal)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "chmod +x footage-x86_64.AppImage" >> release_notes.md
-          echo "./footage-x86_64.AppImage" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### Debian/Ubuntu" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo dpkg -i footage_*.deb" >> release_notes.md
-          echo "sudo apt-get install -f" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### RPM (Fedora/RHEL/openSUSE)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo rpm -i footage-*.rpm" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### Pacman (Arch/Manjaro)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo pacman -U footage-*.pkg.tar.zst" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## Required Dependencies" >> release_notes.md
-          echo "- GStreamer plugins (good, bad, ugly, libav)" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "_Generated with AI assistance_" >> release_notes.md
-
-      - name: Release AppImage
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: footage-x86_64.AppImage
-          body_path: release_notes.md
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   rpm:
     name: "RPM Package (amd64)"
     runs-on: ubuntu-24.04
-    container: ubuntu:latest
+    container: ubuntu:26.04
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve version
+        run: |
+          if [ -z "$VERSION" ]; then
+            VERSION=$(grep -m1 "version:" meson.build | grep -o '[0-9.]*')
+          fi
+          VERSION=${VERSION#v}
+          echo "Building version $VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
@@ -244,19 +180,14 @@ jobs:
           rustup install 1.92.0
           rustup default 1.92.0
 
-      - name: Clone upstream source
-        run: |
-          git clone --depth 1 --branch v1.4.0 https://github.com/adhami3310/Footage.git footage-src
-
       - name: Prepare RPM source
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
           unset PKG_CONFIG_SYSROOT_DIR
           export PKG_CONFIG_ALLOW_CROSS=1
           mkdir -p /tmp/rpmbuild/BUILD /tmp/rpmbuild/RPMS /tmp/rpmbuild/SOURCES /tmp/rpmbuild/SPECS /tmp/rpmbuild/SRPMS
-          cp rpmbuild/SPECS/footage.spec /tmp/rpmbuild/SPECS/
-          cd footage-src
-          tar -czf /tmp/rpmbuild/SOURCES/Footage-v1.4.0.tar.gz --transform="s#^\.#Footage-v1.4.0#" .
+          sed -E "s/^(Version:).*/\1        ${VERSION}/" rpmbuild/SPECS/footage.spec > /tmp/rpmbuild/SPECS/footage.spec
+          tar -czf /tmp/rpmbuild/SOURCES/Footage-v${VERSION}.tar.gz --transform="s#^\.#Footage-v${VERSION}#" .
 
       - name: Build RPM
         run: |
@@ -274,74 +205,35 @@ jobs:
           name: footage-rpm
           path: footage-*.rpm
 
-      - name: Generate release notes
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          echo "# Footage $TAG" > release_notes.md
-          echo "" >> release_notes.md
-          echo "Trim and edit short videos and screencasts." >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## Installation" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### AppImage (Universal)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "chmod +x footage-x86_64.AppImage" >> release_notes.md
-          echo "./footage-x86_64.AppImage" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### Debian/Ubuntu" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo dpkg -i footage_*.deb" >> release_notes.md
-          echo "sudo apt-get install -f" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### RPM (Fedora/RHEL/openSUSE)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo rpm -i footage-*.rpm" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "### Pacman (Arch/Manjaro)" >> release_notes.md
-          echo '```bash' >> release_notes.md
-          echo "sudo pacman -U footage-*.pkg.tar.zst" >> release_notes.md
-          echo '```' >> release_notes.md
-          echo "" >> release_notes.md
-          echo "## Required Dependencies" >> release_notes.md
-          echo "- GStreamer plugins (good, bad, ugly, libav)" >> release_notes.md
-          echo "" >> release_notes.md
-          echo "_Generated with AI assistance_" >> release_notes.md
-
-      - name: Release RPM
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: footage-*.rpm
-          body_path: release_notes.md
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   pacman:
     name: "Pacman Package (amd64)"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
+      - name: Resolve version
+        run: |
+          if [ -z "$VERSION" ]; then
+            VERSION=$(grep -m1 "version:" meson.build | grep -o '[0-9.]*')
+          fi
+          VERSION=${VERSION#v}
+          echo "Building version $VERSION"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
       - name: Build Pacman package in Arch Linux container
         run: |
-          docker run --rm -v "${{ github.workspace }}":/work archlinux/archlinux:latest bash -c "
+          docker run --rm -v "${{ github.workspace }}":/work -e VERSION="${VERSION}" archlinux/archlinux:latest bash -c "
             pacman -Syu --noconfirm base-devel sudo
             useradd -m builduser
             echo 'builduser ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
             cd /work
             cat > PKGBUILD << 'PKGBUILD_EOF'
             pkgname=footage
-            pkgver=1.4.0
+            pkgver=\${VERSION}
             pkgrel=1
             pkgdesc=\"Trim and edit short videos and screencasts\"
             arch=('x86_64')
-            url=\"https://gitlab.adhami3310/Footage\"
+            url=\"https://gitlab.com/adhami3310/Footage\"
             license=('GPLv3')
             depends=('gtk4' 'libadwaita' 'gstreamer' 'gst-plugins-base' 'gst-plugins-good' 'gst-plugins-bad' 'gst-plugins-ugly' 'gst-libav')
             makedepends=('meson' 'ninja' 'rust' 'cargo' 'blueprint-compiler')
@@ -369,8 +261,19 @@ jobs:
           name: footage-pacman
           path: footage-*.pkg.tar.zst
 
+  release:
+    name: "Create Release"
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [deb, appimage, rpm, pacman]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
       - name: Generate release notes
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           echo "# Footage $TAG" > release_notes.md
@@ -406,14 +309,12 @@ jobs:
           echo "" >> release_notes.md
           echo "_Generated with AI assistance_" >> release_notes.md
 
-      - name: Release Pacman package
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: footage-*.pkg.tar.zst
+          files: artifacts/*
           body_path: release_notes.md
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
