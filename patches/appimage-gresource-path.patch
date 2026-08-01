@@ -1,0 +1,33 @@
+--- a/src/config.rs.in
++++ b/src/config.rs.in
+@@ -3,5 +3,8 @@
+ pub const LOCALEDIR: &str = @LOCALEDIR@;
+ pub const PKGDATADIR: &str = @PKGDATADIR@;
+ pub const PROFILE: &str = @PROFILE@;
+-pub const RESOURCES_FILE: &str = concat!(@PKGDATADIR@, "/resources.gresource");
++pub fn resources_file() -> String {
++    std::env::var("FOOTAGE_RESOURCE_DIR")
++        .unwrap_or_else(|_| concat!(@PKGDATADIR@, "/resources.gresource").to_string())
++}
+ pub const VERSION: &str = @VERSION@;
+\ No newline at end of file
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -16,7 +16,7 @@
+ use tokio::runtime::Runtime;
+ 
+ use self::application::App;
+-use self::config::{GETTEXT_PACKAGE, LOCALEDIR, RESOURCES_FILE};
++use self::config::{GETTEXT_PACKAGE, LOCALEDIR};
+ 
+ #[macro_export]
+ macro_rules! spawn {
+@@ -56,7 +56,7 @@
+ 
+     glib::set_application_name(&gettext("Footage"));
+ 
+-    let res = gio::Resource::load(RESOURCES_FILE).expect("Could not load gresource file");
++    let res = gio::Resource::load(&config::resources_file()).expect("Could not load gresource file");
+     gio::resources_register(&res);
+ 
+     let app = App::new();
